@@ -51,16 +51,84 @@ public class VirtualOS extends JPanel {
         }
     }
 
-    static final App[] APPS = {
-        new App("CPU Scheduling", new Color(0xe63946), 0, CpuScheduling::new),
-        new App("Banker's Algorithm", new Color(0x2f6fdb), 1, Bankers::new),
-        new App("Paging", new Color(0xf06292), 2, Paging::new),
-        new App("Page Replacement", new Color(0x2f7fe0), 3, PageReplacement::new),
-        new App("Segmentation", new Color(0x2bb673), 4, Segmentation::new),
-        new App("Fragmentation", new Color(0x7e57c2), 5, Fragmentation::new),
-        new App("Disk Scheduling", new Color(0x1f9d55), 6, DiskScheduling::new),
-        new App("Multiprogramming", new Color(0x1e88e5), 7, Multiprogramming::new),
-    };
+    // public class GameAppPanel extends JPanel {
+    //     private Game game;
+
+    //     public GameAppPanel() {
+    //         setLayout(new BorderLayout());
+            
+    //         // Initialize your game logic and panel
+    //         // Note: To avoid spawning GameWindow, you can instantiate GamePanel directly 
+    //         // or ensure your Game constructor allows a headless/panel-only mode.
+    //         // Below we instantiate GamePanel and start the game loop via a custom approach or modified Game class.
+            
+    //         // If you want to use your existing Game class directly, you can pass a flag or handle it like this:
+    //         game = new Game(false); // See step 2 for modifying Game to accept a flag to skip GameWindow
+            
+    //         GamePanel panel = game.getGamePanel();
+    //         add(panel, BorderLayout.CENTER);
+            
+    //         // Ensure the panel can receive keyboard/mouse focus when clicked
+    //         setFocusable(true);
+    //         addMouseListener(new java.awt.event.MouseAdapter() {
+    //             @Override
+    //             public void mousePressed(java.awt.event.MouseEvent e) {
+    //                 panel.requestFocusInWindow();
+    //             }
+    //         });
+    //     }
+    // }
+
+    static final class App {
+        final String title;
+        final Color color;
+        final int glyph;
+        final Supplier<JPanel> factory;
+        App(String title, Color color, int glyph, Supplier<JPanel> factory) {
+            this.title = title; this.color = color; this.glyph = glyph; this.factory = factory;
+        }
+    }
+
+    private static List<App> loadAvailableApps() {
+        List<App> apps = new ArrayList<>();
+        
+        // Core VirtualOS modules
+        apps.add(new App("CPU Scheduling", new Color(0xe63946), 0, CpuScheduling::new));
+        apps.add(new App("Banker's Algorithm", new Color(0x2f6fdb), 1, Bankers::new));
+        apps.add(new App("Paging", new Color(0xf06292), 2, Paging::new));
+        apps.add(new App("Page Replacement", new Color(0x2f7fe0), 3, PageReplacement::new));
+        apps.add(new App("Segmentation", new Color(0x2bb673), 4, Segmentation::new));
+        apps.add(new App("Fragmentation", new Color(0x7e57c2), 5, Fragmentation::new));
+        apps.add(new App("Disk Scheduling", new Color(0x1f9d55), 6, DiskScheduling::new));
+        apps.add(new App("Multiprogramming", new Color(0x1e88e5), 7, Multiprogramming::new));
+
+        // Optional Game App (Checks your exact path)
+        File gameBinDir = new File("C:\\Users\\laptop\\Documents\\Coding Stuff\\Platformer-Game-Learning\\bin");
+        File mainClassFile = new File(gameBinDir, "main/MainClass.class");
+
+        if (mainClassFile.exists()) {
+            apps.add(new App("Fighting Game", new Color(0x8b0000), 0, () -> {
+                try {
+                    // Launches the game using its compiled bin folder and main class
+                    ProcessBuilder pb = new ProcessBuilder(
+                        "java", 
+                        "-cp", gameBinDir.getAbsolutePath(), 
+                        "main.MainClass"
+                    );
+                    // Sets working directory to project root so assets load correctly
+                    pb.directory(gameBinDir.getParentFile());
+                    pb.start();
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                }
+                return new JPanel(); // Blank panel since the game runs in its own process window
+            }));
+        }
+        
+        return apps;
+    }
+
+    static final List<App> APPS = loadAvailableApps();
 
     private static Color lighten(Color c, float f) {
         return new Color(Math.round(c.getRed() + (255 - c.getRed()) * f),
