@@ -39,17 +39,18 @@ import java.util.regex.Pattern;
  * program search, window buttons, battery and clock. Right-click the desktop to change the wallpaper.
  */
 public class VirtualOS extends JPanel {
+    private static final String GAME_NAME = "BATTLE-Z";
 
     // ------------------------------------------------------------------ apps
-    static final class App {
-        final String title;
-        final Color color;
-        final int glyph;
-        final Supplier<JPanel> factory;
-        App(String title, Color color, int glyph, Supplier<JPanel> factory) {
-            this.title = title; this.color = color; this.glyph = glyph; this.factory = factory;
-        }
-    }
+    // static final class App {
+    //     final String title;
+    //     final Color color;
+    //     final int glyph;
+    //     final Supplier<JPanel> factory;
+    //     App(String title, Color color, int glyph, Supplier<JPanel> factory) {
+    //         this.title = title; this.color = color; this.glyph = glyph; this.factory = factory;
+    //     }
+    // }
 
     // public class GameAppPanel extends JPanel {
     //     private Game game;
@@ -102,28 +103,12 @@ public class VirtualOS extends JPanel {
         apps.add(new App("Disk Scheduling", new Color(0x1f9d55), 6, DiskScheduling::new));
         apps.add(new App("Multiprogramming", new Color(0x1e88e5), 7, Multiprogramming::new));
 
-        // Optional Game App (Checks your exact path)
+        // Optional Game App (Loads the game inside VirtualOS with native sizing and window bars)
         File gameBinDir = new File("C:\\Users\\laptop\\Documents\\Coding Stuff\\Platformer-Game-Learning\\bin");
         File mainClassFile = new File(gameBinDir, "main/MainClass.class");
 
-        if (mainClassFile.exists()) {
-            apps.add(new App("BattleZ", Color(0x8b0000), 0, () -> {
-                try {
-                    // Launches the game using its compiled bin folder and main class
-                    ProcessBuilder pb = new ProcessBuilder(
-                        "java", 
-                        "-cp", gameBinDir.getAbsolutePath(), 
-                        "main.MainClass"
-                    );
-                    // Sets working directory to project root so assets load correctly
-                    pb.directory(gameBinDir.getParentFile());
-                    pb.start();
-                } catch (Exception ex) {
-                    ex.printStackTrace();
-                }
-                return new JPanel(); // Blank panel since the game runs in its own process window
-            }));
-        }
+        if (mainClassFile.exists())
+            apps.add(new App(GAME_NAME, new Color(0x8b0000), 0, VirtualOS::createGameApp));
         
         return apps;
     }
@@ -134,6 +119,64 @@ public class VirtualOS extends JPanel {
         return new Color(Math.round(c.getRed() + (255 - c.getRed()) * f),
                 Math.round(c.getGreen() + (255 - c.getGreen()) * f),
                 Math.round(c.getBlue() + (255 - c.getBlue()) * f));
+    }
+
+    private static JPanel createGameApp() {
+        JPanel container = new JPanel(new BorderLayout());
+        try {
+            File gameBinDir = new File("C:\\Users\\laptop\\Documents\\Coding Stuff\\Platformer-Game-Learning\\bin");
+            File gameRoot = gameBinDir.getParentFile();
+            File gameLibDir = new File(gameRoot, "lib");
+
+            List<java.net.URL> urlList = new ArrayList<>();
+            urlList.add(gameBinDir.toURI().toURL());
+
+            if (gameLibDir.exists() && gameLibDir.isDirectory()) {
+                File[] jars = gameLibDir.listFiles((dir, name) -> name.toLowerCase().endsWith(".jar"));
+                if (jars != null) {
+                    for (File jar : jars) {
+                        urlList.add(jar.toURI().toURL());
+                    }
+                }
+            }
+
+            java.net.URLClassLoader classLoader = new java.net.URLClassLoader(
+                urlList.toArray(new java.net.URL[0]), 
+                VirtualOS.class.getClassLoader()
+            );
+
+            Class<?> gameClass = classLoader.loadClass("main.Game");
+            java.lang.reflect.Constructor<?> ctor = gameClass.getConstructor(boolean.class);
+            Object gameInstance = ctor.newInstance(false);
+
+            java.lang.reflect.Method getPanelMethod = gameClass.getMethod("getGamePanel");
+            JPanel gamePanel = (JPanel) getPanelMethod.invoke(gameInstance);
+
+            // Add directly to container at native resolution
+            container.add(gamePanel, BorderLayout.CENTER);
+
+            container.addAncestorListener(new javax.swing.event.AncestorListener() {
+                public void ancestorAdded(javax.swing.event.AncestorEvent event) {
+                    gamePanel.requestFocusInWindow();
+                }
+                public void ancestorMoved(javax.swing.event.AncestorEvent event) {}
+                public void ancestorRemoved(javax.swing.event.AncestorEvent event) {}
+            });
+
+            container.setFocusable(true);
+            container.addMouseListener(new java.awt.event.MouseAdapter() {
+                @Override public void mousePressed(java.awt.event.MouseEvent e) {
+                    gamePanel.requestFocusInWindow();
+                }
+            });
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            JLabel errLabel = new JLabel("Failed to load game: " + ex.getClass().getSimpleName(), SwingConstants.CENTER);
+            errLabel.setForeground(Color.RED);
+            container.add(errLabel, BorderLayout.CENTER);
+        }
+        return container;
     }
 
     /** Draws an app icon (rounded square + white glyph) into the square at x,y with side s. */
@@ -303,26 +346,34 @@ public class VirtualOS extends JPanel {
 
     // --------------------------------------------------------------- windows
     void open(App a) {
+        JPanel content = a.factory.get();
+        if (content == null) {
+            return; 
+        }
         JInternalFrame existing = windows.get(a);
         if (existing != null && !existing.isClosed()) { restore(existing); return; }
+        
         final JInternalFrame f = new JInternalFrame(a.title, true, true, true, true);
         f.setFrameIcon(iconFor(a, 16));
         f.setDefaultCloseOperation(JInternalFrame.DISPOSE_ON_CLOSE);
-        f.setContentPane(a.factory.get());
-        f.addInternalFrameListener(new InternalFrameAdapter() {
-            @Override public void internalFrameClosed(InternalFrameEvent e) {
-                windows.remove(a);
-                JToggleButton b = buttons.remove(f);
-                if (b != null) { windowStrip.remove(b); windowStrip.revalidate(); windowStrip.repaint(); }
-            }
-            @Override public void internalFrameActivated(InternalFrameEvent e) { syncButtons(); }
-            @Override public void internalFrameDeactivated(InternalFrameEvent e) { syncButtons(); }
-        });
-        int dw = Math.max(400, desktop.getWidth()), dh = Math.max(300, desktop.getHeight());
-        int w = Math.min(1000, dw - 40), h = Math.min(700, dh - 20);
-        int off = (cascade++ % 6) * 28;
-        f.setSize(w, h);
-        f.setLocation(Math.min(110 + off, Math.max(0, dw - w)), Math.min(16 + off, Math.max(0, dh - h)));
+        f.setContentPane(content);
+
+        // --- AUTO-SIZE, PACK, AND CENTER THE WINDOW ---
+        if (a.title.equals(GAME_NAME)) {
+            f.pack(); // Automatically sizes window based on the downscaled preferred size + title bar
+            int x = (desktop.getWidth() - f.getWidth()) / 2;
+            int y = (desktop.getHeight() - f.getHeight()) / 2;
+            f.setLocation(Math.max(0, x), Math.max(0, y));
+        } else {
+            int dw = Math.max(400, desktop.getWidth()), dh = Math.max(300, desktop.getHeight());
+            int w = Math.min(1000, dw - 40), h = Math.min(700, dh - 20);
+            f.setSize(w, h);
+            
+            int off = (cascade++ % 6) * 28;
+            f.setLocation(Math.min(110 + off, Math.max(0, dw - w)), Math.min(16 + off, Math.max(0, dh - h)));
+        }
+        // ----------------------------------------------
+
         desktop.add(f);
         f.setVisible(true);
         windows.put(a, f);
