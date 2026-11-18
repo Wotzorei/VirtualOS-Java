@@ -107,7 +107,7 @@ public class VirtualOS extends JPanel {
         File mainClassFile = new File(gameBinDir, "main/MainClass.class");
 
         if (mainClassFile.exists()) {
-            apps.add(new App("Fighting Game", new Color(0x8b0000), 0, () -> {
+            apps.add(new App("BattleZ", Color(0x8b0000), 0, () -> {
                 try {
                     // Launches the game using its compiled bin folder and main class
                     ProcessBuilder pb = new ProcessBuilder(
