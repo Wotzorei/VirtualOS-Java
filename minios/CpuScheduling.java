@@ -164,7 +164,7 @@ public class CpuScheduling extends JPanel {
     // --------------------------------------------------------------------- GUI
     private final DynamicTable table;
     private final JComboBox<String> algo = combo(ALGORITHMS.keySet().toArray(new String[0]));
-    private final JTextField quantum = field("3", 6);
+    private final JTextField quantum = field("", 6);
     private final GanttChart gantt = new GanttChart();
     private final OutputBox out = new OutputBox();
 
@@ -173,8 +173,6 @@ public class CpuScheduling extends JPanel {
         pad(this);
         table = new DynamicTable("Processes (Priority: lower number = higher priority)",
                 new String[]{"PID", "Arrival", "Burst", "Priority"}, CpuScheduling::randomRows, 4);
-        table.setRows(Arrays.asList(new Object[]{"P1", 0, 8, 3}, new Object[]{"P2", 1, 4, 1},
-                new Object[]{"P3", 2, 9, 4}, new Object[]{"P4", 3, 5, 2}));
 
         JPanel opt = row();
         opt.add(label("Algorithm:"));
@@ -186,7 +184,7 @@ public class CpuScheduling extends JPanel {
 
         JPanel north = new JPanel();
         north.setLayout(new BoxLayout(north, BoxLayout.Y_AXIS));
-        north.add(table);
+        north.add(clearRow(this)); north.add(table);
         north.add(opt);
         north.add(gantt);
         add(north, BorderLayout.NORTH);

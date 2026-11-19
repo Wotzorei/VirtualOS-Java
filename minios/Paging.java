@@ -42,9 +42,9 @@ public class Paging extends JPanel {
     }
 
     // --------------------------------------------------------------------- GUI
-    private final JTextField size = field("1024", 8), pages = field("8", 8), frames = field("16", 8);
+    private final JTextField size = field("", 8), pages = field("", 8), frames = field("", 8);
     private final DynamicTable pt;
-    private final JTextField addrs = field("0 1500 2100 4200 5000 8191 9000", 40);
+    private final JTextField addrs = field("", 40);
     private final OutputBox out = new OutputBox();
 
     public Paging() {
@@ -58,8 +58,6 @@ public class Paging extends JPanel {
 
         pt = new DynamicTable("Page table (leave Frame blank = page not in memory)",
                 new String[]{"Page", "Frame"}, null, 5);
-        pt.setRows(Arrays.asList(new Object[]{0, 5}, new Object[]{1, 2}, new Object[]{2, 9}, new Object[]{3, 0},
-                new Object[]{4, ""}, new Object[]{5, 7}, new Object[]{6, 12}, new Object[]{7, 3}));
 
         JPanel adr = row();
         adr.add(label("Logical addresses (comma/space separated):"));
@@ -69,7 +67,7 @@ public class Paging extends JPanel {
 
         JPanel north = new JPanel();
         north.setLayout(new BoxLayout(north, BoxLayout.Y_AXIS));
-        north.add(cfg); north.add(pt); north.add(adr);
+        north.add(clearRow(this)); north.add(cfg); north.add(pt); north.add(adr);
         add(north, BorderLayout.NORTH);
         add(out, BorderLayout.CENTER);
     }

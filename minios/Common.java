@@ -87,7 +87,6 @@ public final class Common {
             setFocusPainted(false);
             setOpaque(false);
             setFont(Theme.BOLD);
-            setForeground(kind == Kind.SOFT ? Theme.PRIMARY_D : Color.WHITE);
             setBorder(new EmptyBorder(3, 12, 3, 12));
             setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             addMouseListener(new MouseAdapter() {
@@ -95,6 +94,9 @@ public final class Common {
                 @Override public void mouseExited(MouseEvent e) { hover = false; repaint(); }
             });
         }
+
+        /** Read live so a theme change needs no re-colouring of buttons. */
+        @Override public Color getForeground() { return kind == Kind.SOFT ? Theme.PRIMARY_D : Color.WHITE; }
 
         @Override public Dimension getPreferredSize() {
             Dimension d = super.getPreferredSize();
@@ -106,8 +108,8 @@ public final class Common {
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             Color base = kind == Kind.PRIMARY ? Theme.PRIMARY : kind == Kind.DANGER ? Theme.CORAL : Theme.PRIMARY_L;
             if (!isEnabled()) base = Theme.BORDER;
-            else if (getModel().isPressed()) base = kind == Kind.SOFT ? new Color(0x252A4B) : base.darker();
-            else if (hover) base = kind == Kind.SOFT ? new Color(0x3A4070) : kind == Kind.PRIMARY ? Theme.PRIMARY_H : base.brighter();
+            else if (getModel().isPressed()) base = kind == Kind.SOFT ? Theme.mix(Theme.PRIMARY_L, Theme.PRIMARY, .30f) : base.darker();
+            else if (hover) base = kind == Kind.SOFT ? Theme.mix(Theme.PRIMARY_L, Theme.PRIMARY, .16f) : kind == Kind.PRIMARY ? Theme.PRIMARY_H : base.brighter();
             g.setColor(base);
             g.fill(new java.awt.geom.RoundRectangle2D.Float(0, 0, getWidth(), getHeight(), 14, 14));
             g.dispose();
@@ -140,14 +142,56 @@ public final class Common {
         c.setFocusable(false);
         c.setUI(new BasicComboBoxUI() {
             @Override protected JButton createArrowButton() {
-                BasicArrowButton b = new BasicArrowButton(SwingConstants.SOUTH, Theme.FIELD, Theme.FIELD,
-                        Theme.PRIMARY_D, Theme.FIELD);
+                // painted from the live theme colours, so it follows light / dark switches
+                BasicArrowButton b = new BasicArrowButton(SwingConstants.SOUTH) {
+                    @Override public void paint(Graphics g) {
+                        g.setColor(Theme.FIELD);
+                        g.fillRect(0, 0, getWidth(), getHeight());
+                        Graphics2D g2 = (Graphics2D) g.create();
+                        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                        g2.setColor(Theme.PRIMARY_D);
+                        int cx = getWidth() / 2, cy = getHeight() / 2;
+                        g2.fillPolygon(new int[]{cx - 4, cx + 4, cx}, new int[]{cy - 2, cy - 2, cy + 3}, 3);
+                        g2.dispose();
+                    }
+                };
                 b.setBorder(BorderFactory.createEmptyBorder());
                 return b;
             }
         });
         c.setBorder(Theme.input());
         return c;
+    }
+
+    /** Anything that needs more than "empty the text boxes" to reset can implement this. */
+    public interface Clearable { void clearInputs(); }
+
+    /**
+     * Resets a whole module: every text box and table empty, results and charts blank.
+     * (Drop-downs keep their selection - they are choices, not values.)
+     */
+    public static void clearInputs(Container root) {
+        if (root instanceof Clearable) ((Clearable) root).clearInputs();
+        for (Component c : root.getComponents()) {
+            if (c instanceof DynamicTable) ((DynamicTable) c).clear();
+            else if (c instanceof OutputBox) ((OutputBox) c).clear();
+            else if (c instanceof GanttChart) ((GanttChart) c).draw(new ArrayList<>());
+            else if (c instanceof DrawPane) ((DrawPane) c).redraw(10, 10, g -> { });
+            else if (c instanceof JTextField) ((JTextField) c).setText("");
+            if (c instanceof Container) clearInputs((Container) c);
+        }
+    }
+
+    /** The red "Clear all inputs" button every module has. */
+    public static JButton clearButton(Container module) {
+        return dangerButton("Clear all inputs", () -> clearInputs(module));
+    }
+
+    /** A row of its own for the clear button (module input rows are too long to share). */
+    public static JPanel clearRow(Container module) {
+        JPanel r = row();
+        r.add(clearButton(module));
+        return r;
     }
 
     /** Small muted caption used in front of inputs. */
@@ -353,7 +397,7 @@ public final class Common {
             bot.add(softButton("Clear all", this::clear));
             if (randomRows != null) {
                 bot.add(label("  Random rows:"));
-                nField = field("10", 5);
+                nField = field("", 5);
                 bot.add(nField);
                 bot.add(softButton("Generate", this::generate));
             }
@@ -460,7 +504,7 @@ public final class Common {
                     double xa = x0 + (sg.s - t0) * unit;
                     xb = x0 + (sg.e - t0) * unit;
                     boolean idle = sg.label.equals("Idle");
-                    g.setColor(idle ? new Color(0x2D3350) : colourFor(sg.label));
+                    g.setColor(idle ? Theme.GRID : colourFor(sg.label));
                     g.fillRect((int) xa, y, (int) (xb - xa), h);
                     g.setColor(Theme.INSET);
                     g.drawRect((int) xa, y, (int) (xb - xa), h);

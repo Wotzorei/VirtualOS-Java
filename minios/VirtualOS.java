@@ -121,18 +121,56 @@ public class VirtualOS extends JPanel {
                 Math.round(c.getBlue() + (255 - c.getBlue()) * f));
     }
 
+    private static final File DESIGNATED_GAME_DIR =
+            new File("cache/battle-z");
+
+    private static void copyDirectory(File source, File target) throws IOException {
+        if (source == null || !source.exists()) return;
+        if (source.isDirectory()) {
+            if (!target.exists() && !target.mkdirs()) {
+                throw new IOException("Failed to create directory: " + target);
+            }
+            File[] children = source.listFiles();
+            if (children != null) {
+                for (File child : children) {
+                    copyDirectory(child, new File(target, child.getName()));
+                }
+            }
+        } else {
+            File parent = target.getParentFile();
+            if (parent != null && !parent.exists() && !parent.mkdirs()) {
+                throw new IOException("Failed to create parent directory: " + parent);
+            }
+            java.nio.file.Files.copy(
+                    source.toPath(),
+                    target.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING
+            );
+        }
+    }
+
     private static JPanel createGameApp() {
         JPanel container = new JPanel(new BorderLayout());
         try {
-            File gameBinDir = new File("C:\\Users\\laptop\\Documents\\Coding Stuff\\Platformer-Game-Learning\\bin");
-            File gameRoot = gameBinDir.getParentFile();
-            File gameLibDir = new File(gameRoot, "lib");
+            File sourceBinDir = new File("C:\\Users\\laptop\\Documents\\Coding Stuff\\Platformer-Game-Learning\\bin");
+            File sourceRoot = sourceBinDir.getParentFile();
+            File sourceLibDir = new File(sourceRoot, "lib");
 
+            File stagedBinDir = new File(DESIGNATED_GAME_DIR, "bin");
+            File stagedLibDir = new File(DESIGNATED_GAME_DIR, "lib");
+
+            // Copy .class files (and lib jars if present) into the designated folder first
+            copyDirectory(sourceBinDir, stagedBinDir);
+            if (sourceLibDir.exists() && sourceLibDir.isDirectory()) {
+                copyDirectory(sourceLibDir, stagedLibDir);
+            }
+
+            // Load classes and libraries from the copied folder
             List<java.net.URL> urlList = new ArrayList<>();
-            urlList.add(gameBinDir.toURI().toURL());
+            urlList.add(stagedBinDir.toURI().toURL());
 
-            if (gameLibDir.exists() && gameLibDir.isDirectory()) {
-                File[] jars = gameLibDir.listFiles((dir, name) -> name.toLowerCase().endsWith(".jar"));
+            if (stagedLibDir.exists() && stagedLibDir.isDirectory()) {
+                File[] jars = stagedLibDir.listFiles((dir, name) -> name.toLowerCase().endsWith(".jar"));
                 if (jars != null) {
                     for (File jar : jars) {
                         urlList.add(jar.toURI().toURL());
@@ -141,8 +179,8 @@ public class VirtualOS extends JPanel {
             }
 
             java.net.URLClassLoader classLoader = new java.net.URLClassLoader(
-                urlList.toArray(new java.net.URL[0]), 
-                VirtualOS.class.getClassLoader()
+                    urlList.toArray(new java.net.URL[0]),
+                    VirtualOS.class.getClassLoader()
             );
 
             Class<?> gameClass = classLoader.loadClass("main.Game");
@@ -152,15 +190,14 @@ public class VirtualOS extends JPanel {
             java.lang.reflect.Method getPanelMethod = gameClass.getMethod("getGamePanel");
             JPanel gamePanel = (JPanel) getPanelMethod.invoke(gameInstance);
 
-            // Add directly to container at native resolution
             container.add(gamePanel, BorderLayout.CENTER);
 
             container.addAncestorListener(new javax.swing.event.AncestorListener() {
-                public void ancestorAdded(javax.swing.event.AncestorEvent event) {
+                @Override public void ancestorAdded(javax.swing.event.AncestorEvent event) {
                     gamePanel.requestFocusInWindow();
                 }
-                public void ancestorMoved(javax.swing.event.AncestorEvent event) {}
-                public void ancestorRemoved(javax.swing.event.AncestorEvent event) {}
+                @Override public void ancestorMoved(javax.swing.event.AncestorEvent event) {}
+                @Override public void ancestorRemoved(javax.swing.event.AncestorEvent event) {}
             });
 
             container.setFocusable(true);

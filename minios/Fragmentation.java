@@ -84,15 +84,12 @@ public class Fragmentation extends JPanel {
             for (int i = 0; i < n; i++) rows.add(new Object[]{"B" + (i + 1), 20 + rnd.nextInt(581)});
             return rows;
         }, 4);
-        blocksTable.setRows(Arrays.asList(new Object[]{"B1", 100}, new Object[]{"B2", 500}, new Object[]{"B3", 200},
-                new Object[]{"B4", 300}, new Object[]{"B5", 600}));
         procsTable = new DynamicTable("Processes", new String[]{"PID", "Size"}, n -> {
             Random rnd = new Random();
             List<Object[]> rows = new ArrayList<>();
             for (int i = 0; i < n; i++) rows.add(new Object[]{"P" + (i + 1), 10 + rnd.nextInt(441)});
             return rows;
         }, 4);
-        procsTable.setRows(Arrays.asList(new Object[]{"P1", 212}, new Object[]{"P2", 417}, new Object[]{"P3", 112}, new Object[]{"P4", 426}));
 
         JPanel row = new JPanel(new GridLayout(1, 2, 6, 0));
         row.add(blocksTable); row.add(procsTable);
@@ -106,7 +103,7 @@ public class Fragmentation extends JPanel {
 
         JPanel north = new JPanel();
         north.setLayout(new BoxLayout(north, BoxLayout.Y_AXIS));
-        north.add(row); north.add(opt); north.add(vis);
+        north.add(clearRow(this)); north.add(row); north.add(opt); north.add(vis);
         add(north, BorderLayout.NORTH);
         add(out, BorderLayout.CENTER);
     }
@@ -147,7 +144,7 @@ public class Fragmentation extends JPanel {
                 double w = 600.0 * b.size / big;
                 g.setColor(Theme.TEXT);
                 g.drawString(b.name + " (" + b.size + ")", 8, y + 13);
-                g.setColor(new Color(0x2D3350));
+                g.setColor(Theme.GRID);
                 g.fillRect(x0, y, (int) w, 18);
                 g.setColor(Theme.BORDER);
                 g.drawRect(x0, y, (int) w, 18);
@@ -161,6 +158,7 @@ public class Fragmentation extends JPanel {
                     g.setColor(Theme.INSET);
                     g.drawRect(x0, y, (int) used, 18);
                     g.drawRect(x0 + (int) used, y, (int) (w - used), 18);
+                    g.setColor(Theme.isDark() ? Theme.INSET : Theme.TEXT);
                     String label = p.name + " (" + p.size + ")";
                     g.drawString(label, (int) (x0 + used / 2 - g.getFontMetrics().stringWidth(label) / 2.0), y + 13);
                 }

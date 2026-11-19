@@ -148,7 +148,7 @@ public class Multiprogramming extends JPanel {
     }
 
     // --------------------------------------------------------------------- GUI
-    private final JTextField mem = field("1000", 8), q = field("2", 6);
+    private final JTextField mem = field("", 8), q = field("", 6);
     private final DynamicTable table;
     private final OutputBox out = new OutputBox();
 
@@ -161,11 +161,9 @@ public class Multiprogramming extends JPanel {
         cfg.add(button("Run simulation", this::run));
         table = new DynamicTable("Programs (I/O time 0 = pure CPU job)",
                 new String[]{"PID", "Arrival", "Memory", "CPU time", "I/O time"}, Multiprogramming::rand, 4);
-        table.setRows(Arrays.asList(new Object[]{"P1", 0, 400, 6, 4}, new Object[]{"P2", 1, 300, 4, 6},
-                new Object[]{"P3", 2, 500, 5, 3}, new Object[]{"P4", 3, 200, 3, 0}, new Object[]{"P5", 4, 600, 4, 2}));
         JPanel north = new JPanel();
         north.setLayout(new BoxLayout(north, BoxLayout.Y_AXIS));
-        north.add(cfg); north.add(table);
+        north.add(clearRow(this)); north.add(cfg); north.add(table);
         add(north, BorderLayout.NORTH);
         add(out, BorderLayout.CENTER);
     }

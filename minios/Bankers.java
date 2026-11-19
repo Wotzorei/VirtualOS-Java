@@ -8,7 +8,7 @@ import java.util.List;
 import static minios.Common.*;
 
 /** Module 2 - Banker's Algorithm (safety check + resource-request check). */
-public class Bankers extends JPanel {
+public class Bankers extends JPanel implements Common.Clearable {
 
     // ------------------------------------------------------------------ logic
     public static int[][] computeNeed(int[][] alloc, int[][] mx) {
@@ -126,9 +126,9 @@ public class Bankers extends JPanel {
         }
     }
 
-    private final JTextField nVar = field("5", 6), mVar = field("3", 6);
+    private final JTextField nVar = field("", 6), mVar = field("", 6);
     private final JPanel inner = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
-    private final JTextField reqPid = field("1", 5), reqVec = field("1 0 2", 16);
+    private final JTextField reqPid = field("", 5), reqVec = field("", 16);
     private final OutputBox out = new OutputBox();
     private MatrixInput alloc, max, avail;
 
@@ -155,12 +155,22 @@ public class Bankers extends JPanel {
         act.add(softButton("Test request", this::request));
 
         JPanel north = new JPanel(new BorderLayout());
-        north.add(top, BorderLayout.NORTH);
+        JPanel head = new JPanel(new BorderLayout());
+        head.add(clearRow(this), BorderLayout.NORTH);
+        head.add(top, BorderLayout.CENTER);
+        north.add(head, BorderLayout.NORTH);
         north.add(scroll, BorderLayout.CENTER);
         north.add(act, BorderLayout.SOUTH);
         add(north, BorderLayout.NORTH);
         add(out, BorderLayout.CENTER);
-        sample();
+    }
+
+    /** Removes the matrices too, so the screen starts again from "enter the sizes". */
+    @Override public void clearInputs() {
+        inner.removeAll();
+        alloc = max = avail = null;
+        inner.revalidate();
+        inner.repaint();
     }
 
     private void create() {

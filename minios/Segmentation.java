@@ -47,16 +47,12 @@ public class Segmentation extends JPanel {
         setLayout(new BorderLayout(4, 4));
         pad(this);
         segs = new DynamicTable("Segment table", new String[]{"Segment", "Base", "Limit"}, Segmentation::randSegments, 4);
-        segs.setRows(Arrays.asList(new Object[]{0, 1400, 1000}, new Object[]{1, 6300, 400}, new Object[]{2, 4300, 400},
-                new Object[]{3, 3200, 1100}, new Object[]{4, 4700, 1000}));
         reqs = new DynamicTable("Logical addresses (segment, offset)", new String[]{"Segment", "Offset"}, this::randRequests, 4);
-        reqs.setRows(Arrays.asList(new Object[]{2, 53}, new Object[]{3, 852}, new Object[]{0, 1222}, new Object[]{1, 399},
-                new Object[]{4, 0}, new Object[]{7, 10}, new Object[]{2, 400}));
         JPanel btn = row();
         btn.add(button("Translate", this::run));
         JPanel north = new JPanel();
         north.setLayout(new BoxLayout(north, BoxLayout.Y_AXIS));
-        north.add(segs); north.add(reqs); north.add(btn);
+        north.add(clearRow(this)); north.add(segs); north.add(reqs); north.add(btn);
         add(north, BorderLayout.NORTH);
         add(out, BorderLayout.CENTER);
     }

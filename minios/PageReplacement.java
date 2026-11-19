@@ -82,10 +82,10 @@ public class PageReplacement extends JPanel {
     }
 
     // --------------------------------------------------------------------- GUI
-    private final JTextField refs = field("7 0 1 2 0 3 0 4 2 3 0 3 2 1 2 0 1 7 0 1", 60);
-    private final JTextField nframes = field("3", 6);
+    private final JTextField refs = field("", 60);
+    private final JTextField nframes = field("", 6);
     private final JComboBox<String> algo = combo(ALGOS);
-    private final JTextField rlen = field("50", 7), rmax = field("9", 5);
+    private final JTextField rlen = field("", 7), rmax = field("", 5);
     private final OutputBox out = new OutputBox();
 
     public PageReplacement() {
@@ -103,7 +103,7 @@ public class PageReplacement extends JPanel {
         g.add(softButton("Generate", this::rand));
         JPanel north = new JPanel();
         north.setLayout(new BoxLayout(north, BoxLayout.Y_AXIS));
-        north.add(f); north.add(g);
+        north.add(clearRow(this)); north.add(f); north.add(g);
         add(north, BorderLayout.NORTH);
         add(out, BorderLayout.CENTER);
     }

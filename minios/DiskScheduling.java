@@ -103,8 +103,8 @@ public class DiskScheduling extends JPanel {
     }
 
     // --------------------------------------------------------------------- GUI
-    private final JTextField reqs = field("98 183 37 122 14 124 65 67", 50);
-    private final JTextField rn = field("20", 6), head = field("53", 7), size = field("200", 7);
+    private final JTextField reqs = field("", 50);
+    private final JTextField rn = field("", 6), head = field("", 7), size = field("", 7);
     private final JComboBox<String> dir = combo(new String[]{UP, DOWN});
     private final JComboBox<String> algo = combo(ALGOS);
     private final DrawPane plot = new DrawPane(230);
@@ -128,7 +128,7 @@ public class DiskScheduling extends JPanel {
         box.add(plot, BorderLayout.CENTER);
         JPanel north = new JPanel();
         north.setLayout(new BoxLayout(north, BoxLayout.Y_AXIS));
-        north.add(a); north.add(b); north.add(box);
+        north.add(clearRow(this)); north.add(a); north.add(b); north.add(box);
         add(north, BorderLayout.NORTH);
         add(out, BorderLayout.CENTER);
     }
@@ -161,7 +161,7 @@ public class DiskScheduling extends JPanel {
             for (int t : new int[]{0, sz / 2, sz - 1}) {
                 g.setColor(Theme.MUTED);
                 g.drawString(String.valueOf(t), (int) x.applyAsDouble(t), 12);
-                g.setColor(new Color(0x2A2F4C));
+                g.setColor(Theme.GRID);
                 g.drawLine((int) x.applyAsDouble(t), 18, (int) x.applyAsDouble(t), (int) (20 + rowh * path.size()));
             }
             g.setColor(Theme.PRIMARY);
