@@ -13,6 +13,7 @@ public class Main {
             frame.setContentPane(new VirtualOS());
             frame.setLocationRelativeTo(null);
             frame.setExtendedState(JFrame.MAXIMIZED_BOTH);
+            frame.setUndecorated(true);
             frame.setVisible(true);
         });
     }

@@ -1,6 +1,8 @@
 package minios;
 
 import javax.swing.*;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import java.awt.*;
 import java.util.*;
 import java.util.List;
@@ -8,7 +10,7 @@ import java.util.List;
 import static minios.Common.*;
 
 /** Module 7 - Disk Scheduling: FCFS, SSTF, SCAN, C-SCAN, LOOK, C-LOOK. */
-public class DiskScheduling extends JPanel {
+public class DiskScheduling extends JPanel implements Clearable {
     public static final String[] ALGOS = {"FCFS", "SSTF", "SCAN", "C-SCAN", "LOOK", "C-LOOK"};
     public static final String UP = "Towards higher cylinders", DOWN = "Towards lower cylinders";
 
@@ -103,46 +105,151 @@ public class DiskScheduling extends JPanel {
     }
 
     // --------------------------------------------------------------------- GUI
-    private final JTextField reqs = field("", 50);
-    private final JTextField rn = field("", 6), head = field("", 7), size = field("", 7);
+    private final JTextField reqs = field("", 20);
+    private final JTextField rn = field("8", 5), head = field("", 6), size = field("", 6);
+    private final JLabel queueCountLbl = label("0 requests");
     private final JComboBox<String> dir = combo(new String[]{UP, DOWN});
     private final JComboBox<String> algo = combo(ALGOS);
-    private final DrawPane plot = new DrawPane(230);
+    private final DrawPane plot = new DrawPane(220);
     private final OutputBox out = new OutputBox(9);
 
     public DiskScheduling() {
         setLayout(new BorderLayout(4, 4));
         pad(this);
-        JPanel a = row();
-        a.add(label("Request queue (cylinders):")); a.add(reqs);
-        a.add(label("  Random: count")); a.add(rn);
-        a.add(softButton("Generate", this::rand));
-        JPanel b = row();
-        b.add(label("Initial head:")); b.add(head);
-        b.add(label("  Disk size (cylinders 0..N-1):")); b.add(size);
-        b.add(dir); b.add(algo);
-        b.add(button("Run", this::run));
-        b.add(softButton("Compare all", this::compare));
+
+        reqs.setToolTipText("Space or comma-separated cylinder numbers (0 .. Disk size - 1)");
+        rn.setToolTipText("Number of random cylinder requests to generate (1..5000)");
+        head.setToolTipText("Starting read/write head cylinder");
+        size.setToolTipText("Total cylinders N (valid range 0 .. N-1)");
+
+        reqs.getDocument().addDocumentListener(new DocumentListener() {
+            @Override public void insertUpdate(DocumentEvent e) { updateQueueCount(); }
+            @Override public void removeUpdate(DocumentEvent e) { updateQueueCount(); }
+            @Override public void changedUpdate(DocumentEvent e) { updateQueueCount(); }
+        });
+
+        JPanel controls = new JPanel(new GridBagLayout());
+        controls.setOpaque(false);
+        controls.setBorder(titled("Disk Parameters"));
+
+        GridBagConstraints gc = new GridBagConstraints();
+        gc.insets = new Insets(4, 5, 4, 5);
+        gc.anchor = GridBagConstraints.WEST;
+        gc.gridy = 0;
+
+        // Row 0: Request queue + live count + random fill controls
+        gc.gridx = 0; gc.weightx = 0; gc.fill = GridBagConstraints.NONE;
+        controls.add(label("Request queue:"), gc);
+
+        gc.gridx = 1; gc.weightx = 1.0; gc.fill = GridBagConstraints.HORIZONTAL;
+        controls.add(reqs, gc);
+
+        gc.gridx = 2; gc.weightx = 0; gc.fill = GridBagConstraints.NONE;
+        queueCountLbl.setFont(Theme.SMALL);
+        controls.add(queueCountLbl, gc);
+
+        gc.gridx = 3;
+        controls.add(label("Random count:"), gc);
+
+        gc.gridx = 4;
+        controls.add(rn, gc);
+
+        gc.gridx = 5;
+        JButton randBtn = softButton("Random fill", this::rand);
+        randBtn.setToolTipText("Fill queue with random cylinder requests (defaults to 8 requests on a 200-cylinder disk)");
+        controls.add(randBtn, gc);
+
+        // Row 1: Head, disk size, direction, algorithm, and run actions
+        JPanel row2 = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        row2.setOpaque(false);
+        row2.add(label("Initial head:"));
+        row2.add(head);
+        row2.add(label("Disk size (0..N-1):"));
+        row2.add(size);
+        row2.add(dir);
+        row2.add(algo);
+        row2.add(button("Run", this::run));
+        row2.add(softButton("Compare all", this::compare));
+
+        gc.gridy = 1;
+        gc.gridx = 0;
+        gc.gridwidth = 6;
+        gc.weightx = 1.0;
+        gc.fill = GridBagConstraints.HORIZONTAL;
+        gc.insets = new Insets(4, 0, 2, 0);
+        controls.add(row2, gc);
+
         JPanel box = new JPanel(new BorderLayout());
+        box.setOpaque(false);
         box.setBorder(titled("Head movement (x = cylinder, y = step)"));
         box.add(plot, BorderLayout.CENTER);
+
         JPanel north = new JPanel();
+        north.setOpaque(false);
         north.setLayout(new BoxLayout(north, BoxLayout.Y_AXIS));
-        north.add(clearRow(this)); north.add(a); north.add(b); north.add(box);
+        north.add(clearRow(this));
+        north.add(controls);
+        north.add(box);
+
         add(north, BorderLayout.NORTH);
         add(out, BorderLayout.CENTER);
     }
 
+    @Override
+    public void clearInputs() {
+        queueCountLbl.setText("0 requests");
+    }
+
+    private void updateQueueCount() {
+        String raw = reqs.getText().trim();
+        if (raw.isEmpty()) {
+            queueCountLbl.setText("0 requests");
+            return;
+        }
+        int count = 0;
+        for (String tok : raw.split("[,\\s;]+")) {
+            if (!tok.isEmpty()) count++;
+        }
+        queueCountLbl.setText(count == 1 ? "1 request" : count + " requests");
+    }
+
     private void rand() {
-        int n = toInt(rn.getText(), "Count", 1);
-        int sz = toInt(size.getText(), "Disk size", 1);
         Random rnd = new Random();
+
+        // Sensible defaults if the user clicks Random fill before filling count/size/head
+        int n;
+        if (rn.getText().trim().isEmpty()) {
+            n = 8;
+            rn.setText("8");
+        } else {
+            n = toInt(rn.getText(), "Random count", 1, 5000);
+        }
+
+        int sz;
+        if (size.getText().trim().isEmpty()) {
+            sz = 200;
+            size.setText("200");
+        } else {
+            sz = toInt(size.getText(), "Disk size", 1);
+        }
+
+        if (head.getText().trim().isEmpty()) {
+            head.setText(String.valueOf(rnd.nextInt(sz)));
+        }
+
         StringBuilder sb = new StringBuilder();
+        int prev = -1;
         for (int i = 0; i < n; i++) {
+            int cyl = rnd.nextInt(sz);
+            if (sz > 1 && cyl == prev) {
+                cyl = (cyl + 1 + rnd.nextInt(sz - 1)) % sz;
+            }
+            prev = cyl;
             if (i > 0) sb.append(' ');
-            sb.append(rnd.nextInt(sz));
+            sb.append(cyl);
         }
         reqs.setText(sb.toString());
+        reqs.setCaretPosition(0);
     }
 
     private Object[] read() {
@@ -153,30 +260,52 @@ public class DiskScheduling extends JPanel {
     }
 
     private void plot(List<Integer> path, int sz) {
-        final int W = 760, m = 30;
+        final int viewportW = plot.getViewport().getWidth();
+        final int W = Math.max(720, viewportW > 40 ? viewportW - 16 : 760);
+        final int m = 36;
         final double rowh = Math.max(4, Math.min(26, 600.0 / Math.max(1, path.size())));
-        plot.redraw(W + 40, (int) (40 + rowh * path.size()), g -> {
+        final int totalW = W + 24;
+        final int totalH = (int) (42 + rowh * path.size());
+
+        plot.redraw(totalW, totalH, g -> {
             g.setFont(Theme.SMALL);
+            FontMetrics fm = g.getFontMetrics();
             java.util.function.IntToDoubleFunction x = cyl -> m + (double) cyl / Math.max(1, sz - 1) * (W - 2 * m);
-            for (int t : new int[]{0, sz / 2, sz - 1}) {
+
+            int[] ticks = sz == 1 ? new int[]{0} : (sz == 2 ? new int[]{0, 1} : new int[]{0, sz / 2, sz - 1});
+            for (int t : ticks) {
+                int tx = (int) x.applyAsDouble(t);
+                String lbl = String.valueOf(t);
                 g.setColor(Theme.MUTED);
-                g.drawString(String.valueOf(t), (int) x.applyAsDouble(t), 12);
+                g.drawString(lbl, tx - fm.stringWidth(lbl) / 2, 13);
                 g.setColor(Theme.GRID);
-                g.drawLine((int) x.applyAsDouble(t), 18, (int) x.applyAsDouble(t), (int) (20 + rowh * path.size()));
+                g.drawLine(tx, 18, tx, (int) (22 + rowh * path.size()));
             }
+
             g.setColor(Theme.PRIMARY);
             g.setStroke(new BasicStroke(2));
-            for (int i = 0; i + 1 < path.size(); i++)
+            for (int i = 0; i + 1 < path.size(); i++) {
                 g.drawLine((int) x.applyAsDouble(path.get(i)), (int) (25 + i * rowh),
                         (int) x.applyAsDouble(path.get(i + 1)), (int) (25 + (i + 1) * rowh));
+            }
+
             g.setStroke(new BasicStroke(1));
             if (path.size() <= 60) {
                 for (int i = 0; i < path.size(); i++) {
                     int cyl = path.get(i);
-                    g.setColor(Theme.CORAL);
-                    g.fillOval((int) x.applyAsDouble(cyl) - 3, (int) (22 + i * rowh), 6, 6);
+                    int px = (int) x.applyAsDouble(cyl);
+                    int py = (int) (25 + i * rowh);
+                    boolean isHead = (i == 0);
+
+                    g.setColor(isHead ? Theme.TEAL : Theme.CORAL);
+                    int r = isHead ? 4 : 3;
+                    g.fillOval(px - r, py - r, r * 2, r * 2);
+
+                    String lbl = isHead ? ("Head: " + cyl) : String.valueOf(cyl);
+                    int lw = fm.stringWidth(lbl);
+                    int lx = (px + 7 + lw > totalW - 6) ? (px - lw - 7) : (px + 7);
                     g.setColor(Theme.TEXT);
-                    g.drawString(String.valueOf(cyl), (int) x.applyAsDouble(cyl) + 6, (int) (29 + i * rowh));
+                    g.drawString(lbl, lx, py + 4);
                 }
             }
         });

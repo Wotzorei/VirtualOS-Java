@@ -96,7 +96,7 @@ public class VirtualOS extends JPanel {
         File mainClassFile = new File(gameBinDir, "main/MainClass.class");
         File stagedMainClass = new File("cache/battle-z/bin/main/MainClass.class");
 
-        if (mainClassFile.exists() || stagedMainClass.exists()) 
+        if (mainClassFile.exists() || stagedMainClass.exists())
             apps.add(new App(GAME_NAME, new Color(0x8b0000), 9, VirtualOS::createGameApp));
 
         return apps;
@@ -129,7 +129,6 @@ public class VirtualOS extends JPanel {
             if (parent != null && !parent.exists() && !parent.mkdirs()) {
                 throw new IOException("Failed to create parent directory: " + parent);
             }
-            // Skip copying if the staged file is already up to date
             if (target.exists()
                     && source.length() == target.length()
                     && source.lastModified() <= target.lastModified()) {
@@ -192,7 +191,6 @@ public class VirtualOS extends JPanel {
             Runnable killProcess = () -> {
                 if (!killed.compareAndSet(false, true)) return;
 
-                // Stop any game loop method or background thread inside main.Game
                 for (String methodName : new String[]{"stop", "stopGame", "close", "dispose"}) {
                     try {
                         java.lang.reflect.Method m = gameClass.getMethod(methodName);
@@ -216,9 +214,8 @@ public class VirtualOS extends JPanel {
                     classLoader.close();
                 } catch (IOException ignored) { }
 
-                // Dispose the hosting JInternalFrame so VirtualOS cleans up the process & taskbar
                 JInternalFrame frame = (JInternalFrame) SwingUtilities.getAncestorOfClass(JInternalFrame.class, container);
-                if (frame != null) {
+                if (frame != null && !frame.isClosed()) {
                     try {
                         frame.setClosed(true);
                     } catch (PropertyVetoException e) {
@@ -227,7 +224,6 @@ public class VirtualOS extends JPanel {
                 }
             };
 
-            // Listen directly on gamePanel while it has active game focus
             gamePanel.addKeyListener(new KeyAdapter() {
                 @Override
                 public void keyPressed(KeyEvent e) {
@@ -237,7 +233,6 @@ public class VirtualOS extends JPanel {
                 }
             });
 
-            // Fallback window-level key binding if container or a child has focus
             container.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
                     .put(KeyStroke.getKeyStroke(KeyEvent.VK_BACK_SPACE, 0), "killGameProcess");
             container.getActionMap().put("killGameProcess", new AbstractAction() {
@@ -249,14 +244,31 @@ public class VirtualOS extends JPanel {
 
             container.add(gamePanel, BorderLayout.CENTER);
 
+            java.util.concurrent.atomic.AtomicBoolean hookAttached = new java.util.concurrent.atomic.AtomicBoolean(false);
             container.addAncestorListener(new javax.swing.event.AncestorListener() {
                 @Override public void ancestorAdded(javax.swing.event.AncestorEvent event) {
                     gamePanel.requestFocusInWindow();
+                    if (hookAttached.compareAndSet(false, true)) {
+                        JInternalFrame frame = (JInternalFrame) SwingUtilities.getAncestorOfClass(JInternalFrame.class, container);
+                        if (frame != null) {
+                            frame.addInternalFrameListener(new InternalFrameAdapter() {
+                                @Override public void internalFrameClosed(InternalFrameEvent e) {
+                                    killProcess.run();
+                                }
+                                @Override public void internalFrameActivated(InternalFrameEvent e) {
+                                    gamePanel.requestFocusInWindow();
+                                }
+                            });
+                            frame.addComponentListener(new ComponentAdapter() {
+                                @Override public void componentShown(ComponentEvent e) {
+                                    gamePanel.requestFocusInWindow();
+                                }
+                            });
+                        }
+                    }
                 }
                 @Override public void ancestorMoved(javax.swing.event.AncestorEvent event) {}
-                @Override public void ancestorRemoved(javax.swing.event.AncestorEvent event) {
-                    killProcess.run();
-                }
+                @Override public void ancestorRemoved(javax.swing.event.AncestorEvent event) {}
             });
 
             container.setFocusable(true);
@@ -464,7 +476,6 @@ public class VirtualOS extends JPanel {
                 g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
                 g.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
 
-                // Bold geometric Z path
                 Path2D.Float zPath = new Path2D.Float();
                 zPath.moveTo(x + 2.2f * u, y + 1.9f * u);
                 zPath.lineTo(x + 7.8f * u, y + 1.9f * u);
@@ -478,14 +489,12 @@ public class VirtualOS extends JPanel {
                 zPath.lineTo(x + 2.2f * u, y + 3.15f * u);
                 zPath.closePath();
 
-                // Cut a clean horizontal channel through the center of the Z
                 Area zArea = new Area(zPath);
                 float bandH = 2.05f * u;
                 zArea.subtract(new Area(new Rectangle2D.Float(
                         x + 1.0f * u, y + 5.0f * u - bandH / 2f, 8.0f * u, bandH)));
                 g.fill(zArea);
 
-                // Draw "Battle" inside the horizontal cutout
                 String word = "Battle";
                 float maxTextW = 7.8f * u;
                 float fontSize = 2.3f * u;
@@ -507,7 +516,6 @@ public class VirtualOS extends JPanel {
                 g.drawString(word, tx, ty);
                 break;
             }
-
             default: { // Compact ascending bars
                 g.fill(new RoundRectangle2D.Float(x + 2.4f * u, y + 5.3f * u, 1.35f * u, 2.4f * u, 0.45f * u, 0.45f * u));
                 g.fill(new RoundRectangle2D.Float(x + 4.32f * u, y + 3.7f * u, 1.35f * u, 4.0f * u, 0.45f * u, 0.45f * u));
@@ -573,7 +581,6 @@ public class VirtualOS extends JPanel {
         loadWallpaper();
         Theme.addListener(this::onThemeChanged);
         updateOpenCount();
-
         startBatteryPoller();
     }
 
@@ -1566,12 +1573,207 @@ public class VirtualOS extends JPanel {
         wp.addActionListener(e -> chooseWallpaper());
         m.add(wp);
         JMenuItem off = new JMenuItem("Shut down");
-        off.addActionListener(e -> {
-            if (JOptionPane.showConfirmDialog(this, "Close " + OS_NAME + "?", "Shut down", JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION)
-                System.exit(0);
-        });
+        off.addActionListener(e -> showShutdownDialog());
         m.add(off);
         return m;
+    }
+
+    // ------------------------------------------------------ shutdown sequence
+    private void showShutdownDialog() {
+        Window owner = SwingUtilities.getWindowAncestor(this);
+        final JDialog dialog = new JDialog(owner, "Shut down", Dialog.ModalityType.APPLICATION_MODAL);
+        dialog.setUndecorated(true);
+        dialog.setBackground(Theme.BORDER);
+
+        JPanel root = new JPanel(new BorderLayout(0, 14)) {
+            @Override
+            protected void paintComponent(Graphics g0) {
+                Graphics2D g = (Graphics2D) g0.create();
+                g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                int w = getWidth(), h = getHeight();
+                g.setColor(Theme.CARD);
+                g.fillRect(0, 0, w, h);
+
+                // Top accent bar matching active theme
+                g.setPaint(new GradientPaint(0, 0, Theme.TASK_A, w, 0, Theme.TASK_B));
+                g.fillRect(0, 0, w, 5);
+
+                g.setColor(Theme.BORDER);
+                g.drawRect(0, 0, w - 1, h - 1);
+                g.dispose();
+            }
+        };
+        root.setBorder(new EmptyBorder(20, 22, 18, 22));
+
+        // Header with OS emblem and title
+        JPanel header = new JPanel(new BorderLayout(12, 0));
+        header.setOpaque(false);
+        header.add(new JLabel(iconFor(APPS.get(0), 38)), BorderLayout.WEST);
+
+        JPanel titles = new JPanel();
+        titles.setOpaque(false);
+        titles.setLayout(new BoxLayout(titles, BoxLayout.Y_AXIS));
+        JLabel titleLbl = new JLabel("Shut down " + OS_NAME);
+        titleLbl.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 15));
+        titleLbl.setForeground(Theme.TEXT);
+        JLabel subLbl = new JLabel("End your current desktop session and power off?");
+        subLbl.setFont(Theme.BASE);
+        subLbl.setForeground(Theme.MUTED);
+        titles.add(titleLbl);
+        titles.add(Box.createVerticalStrut(3));
+        titles.add(subLbl);
+        header.add(titles, BorderLayout.CENTER);
+        root.add(header, BorderLayout.NORTH);
+
+        // Open process notice card
+        List<String> openNames = openProcessNames();
+        JPanel infoBox = new JPanel(new BorderLayout(8, 2));
+        infoBox.setBackground(Theme.INSET);
+        infoBox.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(Theme.BORDER, 1, true),
+                new EmptyBorder(8, 12, 8, 12)
+        ));
+
+        JLabel statusLbl = new JLabel(openNames.isEmpty()
+                ? "No active processes running. Ready to power off."
+                : openNames.size() + " active process" + (openNames.size() == 1 ? "" : "es") + " will be closed:");
+        statusLbl.setFont(Theme.BOLD);
+        statusLbl.setForeground(openNames.isEmpty() ? Theme.TEAL : Theme.AMBER);
+        infoBox.add(statusLbl, BorderLayout.NORTH);
+
+        if (!openNames.isEmpty()) {
+            JLabel appsLbl = new JLabel(String.join(", ", openNames));
+            appsLbl.setFont(Theme.SMALL);
+            appsLbl.setForeground(Theme.MUTED);
+            infoBox.add(appsLbl, BorderLayout.SOUTH);
+        }
+        root.add(infoBox, BorderLayout.CENTER);
+
+        // CustomButton action footer
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        actions.setOpaque(false);
+        CustomButton cancelBtn = new CustomButton("Cancel", CustomButton.Variant.SECONDARY);
+        CustomButton shutdownBtn = new CustomButton("Shut down", CustomButton.Variant.DANGER);
+        cancelBtn.addActionListener(e -> dialog.dispose());
+        shutdownBtn.addActionListener(e -> {
+            dialog.dispose();
+            beginShutdownSequence();
+        });
+        actions.add(cancelBtn);
+        actions.add(shutdownBtn);
+        root.add(actions, BorderLayout.SOUTH);
+
+        // Support Escape to cancel and Enter to confirm
+        JRootPane dialogRoot = dialog.getRootPane();
+        dialogRoot.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "cancelShutdown");
+        dialogRoot.getActionMap().put("cancelShutdown", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) { dialog.dispose(); }
+        });
+        dialogRoot.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "confirmShutdown");
+        dialogRoot.getActionMap().put("confirmShutdown", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) {
+                dialog.dispose();
+                beginShutdownSequence();
+            }
+        });
+
+        dialog.setContentPane(root);
+        dialog.pack();
+        dialog.setSize(Math.max(380, dialog.getWidth()), dialog.getHeight());
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
+    }
+
+    private void beginShutdownSequence() {
+        // Close all open windows cleanly so background threads (e.g. games) terminate
+        for (JInternalFrame f : new ArrayList<>(windows.values())) {
+            if (f != null && !f.isClosed()) {
+                try {
+                    f.setClosed(true);
+                } catch (PropertyVetoException ex) {
+                    f.dispose();
+                }
+            }
+        }
+
+        JRootPane root = SwingUtilities.getRootPane(this);
+        if (root == null) {
+            System.exit(0);
+            return;
+        }
+
+        final long startMs = System.currentTimeMillis();
+        final int durationMs = 800;
+
+        JComponent overlay = new JComponent() {
+            @Override
+            protected void paintComponent(Graphics g0) {
+                Graphics2D g = (Graphics2D) g0.create();
+                g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+
+                int w = getWidth(), h = getHeight();
+                float progress = Math.min(1f, (System.currentTimeMillis() - startMs) / (float) durationMs);
+
+                // Smoothly darken desktop
+                int alpha = Math.round(170 + 70 * progress);
+                g.setColor(new Color(8, 12, 24, alpha));
+                g.fillRect(0, 0, w, h);
+
+                int cx = w / 2, cy = h / 2 - 20;
+
+                // Animated spinner ring
+                g.setStroke(new BasicStroke(3.2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                g.setColor(new Color(255, 255, 255, 45));
+                g.drawOval(cx - 22, cy - 22, 44, 44);
+                g.setColor(Theme.TEAL);
+                int startAngle = (int) ((System.currentTimeMillis() / 4) % 360);
+                g.drawArc(cx - 22, cy - 22, 44, 44, -startAngle, 120);
+
+                // Primary status title
+                g.setColor(Color.WHITE);
+                g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 18));
+                String msg = "Shutting down " + OS_NAME + "...";
+                FontMetrics fm = g.getFontMetrics();
+                g.drawString(msg, cx - fm.stringWidth(msg) / 2, cy + 52);
+
+                // Step subtitle
+                g.setColor(new Color(255, 255, 255, 180));
+                g.setFont(Theme.BASE);
+                String step = progress < 0.35f ? "Closing active processes..."
+                        : progress < 0.75f ? "Saving desktop preferences..."
+                        : "Powering off...";
+                FontMetrics sfm = g.getFontMetrics();
+                g.drawString(step, cx - sfm.stringWidth(step) / 2, cy + 74);
+
+                // Progress bar
+                int barW = 240, barH = 6;
+                int bx = cx - barW / 2, by = cy + 92;
+                g.setColor(new Color(255, 255, 255, 40));
+                g.fill(new RoundRectangle2D.Float(bx, by, barW, barH, barH, barH));
+                g.setPaint(new GradientPaint(bx, by, Theme.PRIMARY, bx + barW, by, Theme.TEAL));
+                g.fill(new RoundRectangle2D.Float(bx, by, Math.max(barH, barW * progress), barH, barH, barH));
+
+                g.dispose();
+            }
+        };
+
+        overlay.setOpaque(false);
+        overlay.addMouseListener(new MouseAdapter() { });
+        root.setGlassPane(overlay);
+        overlay.setVisible(true);
+
+        javax.swing.Timer shutdownTimer = new javax.swing.Timer(25, null);
+        shutdownTimer.addActionListener(ev -> {
+            overlay.repaint();
+            if (System.currentTimeMillis() - startMs >= durationMs) {
+                shutdownTimer.stop();
+                System.exit(0);
+            }
+        });
+        shutdownTimer.start();
     }
 
     private List<App> matches(String q) {
