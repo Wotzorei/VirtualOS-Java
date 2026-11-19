@@ -142,7 +142,6 @@ public class VirtualOS extends JPanel {
                         java.nio.file.StandardCopyOption.REPLACE_EXISTING
                 );
             } catch (java.nio.file.FileSystemException ex) {
-                // If Windows still holds a lock on an already-staged JAR/DLL, reuse it
                 if (!target.exists()) throw ex;
             }
         }
@@ -532,7 +531,7 @@ public class VirtualOS extends JPanel {
     private final Desktop desktop = new Desktop();
     private final List<DesktopIcon> icons = new ArrayList<>();
     private boolean autoArrange = true;
-    private JPanel taskbar;
+    private final JPanel taskbar;
     private Runnable personalizeSync = () -> { };
     final App personalizeApp = new App("Personalize", new Color(0x7e57c2), 8, () -> new PersonalizePanel());
     private final SystemWidget system = new SystemWidget();
