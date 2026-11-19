@@ -1,13 +1,6 @@
 package minios;
 
 import com.sun.management.OperatingSystemMXBean;
-
-import javax.imageio.ImageIO;
-import javax.swing.*;
-import javax.swing.border.EmptyBorder;
-import javax.swing.event.InternalFrameAdapter;
-import javax.swing.event.InternalFrameEvent;
-import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.*;
 import java.awt.event.*;
 import java.awt.geom.*;
@@ -22,77 +15,72 @@ import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.time.format.TextStyle;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.prefs.Preferences;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import javax.imageio.ImageIO;
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import javax.swing.event.InternalFrameAdapter;
+import javax.swing.event.InternalFrameEvent;
+import javax.swing.filechooser.FileNameExtensionFilter;
 
 /**
  * VirtualOS - a small desktop shell that hosts the Mini OS Simulator modules.
  * Desktop icons (double-click) open each module in its own window; the taskbar has a Start menu,
- * program search, window buttons, battery and clock. Right-click the desktop to change the wallpaper.
+ * program search, window buttons, open process counter, show-desktop button, and clickable clock/calendar.
+ * Right-click the desktop to change the wallpaper or personalize the shell.
  */
 public class VirtualOS extends JPanel {
     private static final String GAME_NAME = "BATTLE-Z";
+    private static final String OS_NAME = "Jureve Vantage";
+
+    private static final class Reminder {
+        final String time;
+        final String note;
+
+        Reminder(String time, String note) {
+            this.time = time;
+            this.note = note;
+        }
+
+        @Override
+        public String toString() {
+            return "[" + time + "] " + note;
+        }
+    }
 
     // ------------------------------------------------------------------ apps
-    // static final class App {
-    //     final String title;
-    //     final Color color;
-    //     final int glyph;
-    //     final Supplier<JPanel> factory;
-    //     App(String title, Color color, int glyph, Supplier<JPanel> factory) {
-    //         this.title = title; this.color = color; this.glyph = glyph; this.factory = factory;
-    //     }
-    // }
-
-    // public class GameAppPanel extends JPanel {
-    //     private Game game;
-
-    //     public GameAppPanel() {
-    //         setLayout(new BorderLayout());
-            
-    //         // Initialize your game logic and panel
-    //         // Note: To avoid spawning GameWindow, you can instantiate GamePanel directly 
-    //         // or ensure your Game constructor allows a headless/panel-only mode.
-    //         // Below we instantiate GamePanel and start the game loop via a custom approach or modified Game class.
-            
-    //         // If you want to use your existing Game class directly, you can pass a flag or handle it like this:
-    //         game = new Game(false); // See step 2 for modifying Game to accept a flag to skip GameWindow
-            
-    //         GamePanel panel = game.getGamePanel();
-    //         add(panel, BorderLayout.CENTER);
-            
-    //         // Ensure the panel can receive keyboard/mouse focus when clicked
-    //         setFocusable(true);
-    //         addMouseListener(new java.awt.event.MouseAdapter() {
-    //             @Override
-    //             public void mousePressed(java.awt.event.MouseEvent e) {
-    //                 panel.requestFocusInWindow();
-    //             }
-    //         });
-    //     }
-    // }
-
     static final class App {
         final String title;
         final Color color;
         final int glyph;
         final Supplier<JPanel> factory;
+
         App(String title, Color color, int glyph, Supplier<JPanel> factory) {
-            this.title = title; this.color = color; this.glyph = glyph; this.factory = factory;
+            this.title = title;
+            this.color = color;
+            this.glyph = glyph;
+            this.factory = factory;
         }
     }
 
     private static List<App> loadAvailableApps() {
         List<App> apps = new ArrayList<>();
-        
+
+        // Dedicated OS icon/app
+        apps.add(new App(OS_NAME, new Color(0x0ea5e9), 8, null));
+
         // Core VirtualOS modules
         apps.add(new App("CPU Scheduling", new Color(0xe63946), 0, CpuScheduling::new));
         apps.add(new App("Banker's Algorithm", new Color(0x2f6fdb), 1, Bankers::new));
@@ -103,13 +91,15 @@ public class VirtualOS extends JPanel {
         apps.add(new App("Disk Scheduling", new Color(0x1f9d55), 6, DiskScheduling::new));
         apps.add(new App("Multiprogramming", new Color(0x1e88e5), 7, Multiprogramming::new));
 
-        // Optional Game App (Loads the game inside VirtualOS with native sizing and window bars)
+        // Optional Game App
         File gameBinDir = new File("C:\\Users\\laptop\\Documents\\Coding Stuff\\Platformer-Game-Learning\\bin");
         File mainClassFile = new File(gameBinDir, "main/MainClass.class");
+        File stagedMainClass = new File("cache/battle-z/bin/main/MainClass.class");
 
-        if (mainClassFile.exists())
+        if (mainClassFile.exists() || stagedMainClass.exists()) {
             apps.add(new App(GAME_NAME, new Color(0x8b0000), 0, VirtualOS::createGameApp));
-        
+        }
+
         return apps;
     }
 
@@ -121,8 +111,7 @@ public class VirtualOS extends JPanel {
                 Math.round(c.getBlue() + (255 - c.getBlue()) * f));
     }
 
-    private static final File DESIGNATED_GAME_DIR =
-            new File("cache/battle-z");
+    private static final File DESIGNATED_GAME_DIR = new File("cache/battle-z");
 
     private static void copyDirectory(File source, File target) throws IOException {
         if (source == null || !source.exists()) return;
@@ -154,18 +143,18 @@ public class VirtualOS extends JPanel {
         try {
             File sourceBinDir = new File("C:\\Users\\laptop\\Documents\\Coding Stuff\\Platformer-Game-Learning\\bin");
             File sourceRoot = sourceBinDir.getParentFile();
-            File sourceLibDir = new File(sourceRoot, "lib");
+            File sourceLibDir = sourceRoot != null ? new File(sourceRoot, "lib") : null;
 
             File stagedBinDir = new File(DESIGNATED_GAME_DIR, "bin");
             File stagedLibDir = new File(DESIGNATED_GAME_DIR, "lib");
 
-            // Copy .class files (and lib jars if present) into the designated folder first
-            copyDirectory(sourceBinDir, stagedBinDir);
-            if (sourceLibDir.exists() && sourceLibDir.isDirectory()) {
-                copyDirectory(sourceLibDir, stagedLibDir);
+            if (sourceBinDir.exists()) {
+                copyDirectory(sourceBinDir, stagedBinDir);
+                if (sourceLibDir != null && sourceLibDir.exists() && sourceLibDir.isDirectory()) {
+                    copyDirectory(sourceLibDir, stagedLibDir);
+                }
             }
 
-            // Load classes and libraries from the copied folder
             List<java.net.URL> urlList = new ArrayList<>();
             urlList.add(stagedBinDir.toURI().toURL());
 
@@ -216,13 +205,87 @@ public class VirtualOS extends JPanel {
         return container;
     }
 
-    /** Draws an app icon (rounded square + white glyph) into the square at x,y with side s. */
+    // ------------------------------------------------------------ icon appearance
+    enum IconShape {
+        ROUNDED("Rounded"), CIRCLE("Circle"), SQUARE("Square");
+        final String label;
+        IconShape(String l) { label = l; }
+    }
+
+    enum IconColors {
+        ORIGINAL("Original"), ACCENT("Theme accent"), MONO("Monochrome");
+        final String label;
+        IconColors(String l) { label = l; }
+    }
+
+    /** How icons look everywhere (desktop, windows, taskbar, menus). Saved between runs. */
+    static final class IconStyle {
+        static final int SMALL = 32, MEDIUM = 44, LARGE = 60;
+        static int size = MEDIUM;
+        static IconShape shape = IconShape.ROUNDED;
+        static boolean gradient = true;
+        static IconColors colors = IconColors.ORIGINAL;
+        static boolean labels = true;
+        static final Map<String, Integer> custom = new HashMap<>();
+
+        static void load(Preferences p) {
+            try {
+                int sz = p.getInt("icon.size", MEDIUM);
+                size = sz == SMALL || sz == LARGE ? sz : MEDIUM;
+                shape = IconShape.valueOf(p.get("icon.shape", IconShape.ROUNDED.name()));
+                colors = IconColors.valueOf(p.get("icon.colors", IconColors.ORIGINAL.name()));
+                gradient = p.getBoolean("icon.gradient", true);
+                labels = p.getBoolean("icon.labels", true);
+                custom.clear();
+                String raw = p.get("icon.custom", "");
+                if (!raw.isEmpty()) for (String part : raw.split("\\|")) {
+                    int eq = part.lastIndexOf('=');
+                    if (eq > 0) custom.put(part.substring(0, eq), Integer.parseInt(part.substring(eq + 1)));
+                }
+            } catch (Exception ignored) { }
+        }
+
+        static void save(Preferences p) {
+            try {
+                p.putInt("icon.size", size);
+                p.put("icon.shape", shape.name());
+                p.put("icon.colors", colors.name());
+                p.putBoolean("icon.gradient", gradient);
+                p.putBoolean("icon.labels", labels);
+                StringBuilder sb = new StringBuilder();
+                for (Map.Entry<String, Integer> e : custom.entrySet()) {
+                    if (sb.length() > 0) sb.append('|');
+                    sb.append(e.getKey()).append('=').append(e.getValue());
+                }
+                p.put("icon.custom", sb.toString());
+            } catch (Exception ignored) { }
+        }
+    }
+
+    static Color colorOf(App a) {
+        Integer c = IconStyle.custom.get(a.title);
+        if (c != null) return new Color(c);
+        switch (IconStyle.colors) {
+            case ACCENT: return Theme.PRIMARY;
+            case MONO:   return Theme.isDark() ? new Color(0x5B6477) : new Color(0x6B7385);
+            default:     return a.color;
+        }
+    }
+
+    /** Draws an app icon (background shape + white glyph) into the square at x,y with side s. */
     static void paintGlyph(Graphics2D g0, App a, float x, float y, float s) {
         Graphics2D g = (Graphics2D) g0.create();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
-        g.setPaint(new GradientPaint(x, y, lighten(a.color, 0.22f), x, y + s, a.color));
-        g.fill(new RoundRectangle2D.Float(x, y, s, s, s * 0.26f, s * 0.26f));
+        final Color col = colorOf(a);
+        Shape bg;
+        switch (IconStyle.shape) {
+            case CIRCLE: bg = new Ellipse2D.Float(x, y, s, s); break;
+            case SQUARE: bg = new RoundRectangle2D.Float(x, y, s, s, s * 0.08f, s * 0.08f); break;
+            default:     bg = new RoundRectangle2D.Float(x, y, s, s, s * 0.26f, s * 0.26f);
+        }
+        g.setPaint(IconStyle.gradient ? new GradientPaint(x, y, lighten(col, 0.22f), x, y + s, col) : col);
+        g.fill(bg);
         float u = s / 10f;
         g.setColor(Color.WHITE);
         switch (a.glyph) {
@@ -235,7 +298,7 @@ public class VirtualOS extends JPanel {
                     g.fill(new Rectangle2D.Float(x + 7f * u, y + p * u, 1.3f * u, 0.6f * u));
                 }
                 g.fill(new RoundRectangle2D.Float(x + 2.8f * u, y + 2.8f * u, 4.4f * u, 4.4f * u, u, u));
-                g.setColor(a.color);
+                g.setColor(col);
                 g.fill(new Rectangle2D.Float(x + 4f * u, y + 4f * u, 2f * u, 2f * u));
                 break;
             }
@@ -249,7 +312,7 @@ public class VirtualOS extends JPanel {
                 p.lineTo(x + 1.8f * u, y + 2.8f * u);
                 p.closePath();
                 g.fill(p);
-                g.setColor(a.color);
+                g.setColor(col);
                 g.setStroke(new BasicStroke(0.9f * u, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
                 Path2D.Float chk = new Path2D.Float();
                 chk.moveTo(x + 3.6f * u, y + 5.1f * u);
@@ -269,7 +332,7 @@ public class VirtualOS extends JPanel {
                 p.lineTo(x + 1.2f * u, y + 5f * u);
                 p.closePath();
                 g.fill(p);
-                g.setColor(a.color);
+                g.setColor(col);
                 g.fill(new Rectangle2D.Float(x + 4.2f * u, y + 5.7f * u, 1.6f * u, 2.5f * u));
                 break;
             }
@@ -281,7 +344,7 @@ public class VirtualOS extends JPanel {
             case 4: { // stacked segments
                 g.fill(new RoundRectangle2D.Float(x + 2.2f * u, y + 2.2f * u, 5.6f * u, 2.4f * u, u, u));
                 g.fill(new RoundRectangle2D.Float(x + 2.2f * u, y + 5.4f * u, 5.6f * u, 2.4f * u, u, u));
-                g.setColor(a.color);
+                g.setColor(col);
                 g.fill(new Ellipse2D.Float(x + 3f * u, y + 3f * u, 1f * u, 1f * u));
                 g.fill(new Ellipse2D.Float(x + 3f * u, y + 6.2f * u, 1f * u, 1f * u));
                 break;
@@ -301,6 +364,18 @@ public class VirtualOS extends JPanel {
                 g.fill(new Ellipse2D.Float(x + 4.5f * u, y + 4.5f * u, 1f * u, 1f * u));
                 g.setStroke(new BasicStroke(0.8f * u, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
                 g.draw(new Line2D.Float(x + 5f * u, y + 5f * u, x + 7.4f * u, y + 2.6f * u));
+                break;
+            }
+            case 8: { // sliders / OS emblem
+                g.setStroke(new BasicStroke(0.8f * u, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                float[] ys = {3f, 5f, 7f}, kx = {6.6f, 3.4f, 5.6f};
+                for (float yy : ys) g.draw(new Line2D.Float(x + 2f * u, y + yy * u, x + 8f * u, y + yy * u));
+                for (int k = 0; k < 3; k++) {
+                    g.setColor(Color.WHITE);
+                    g.fill(new Ellipse2D.Float(x + (kx[k] - 1f) * u, y + (ys[k] - 1f) * u, 2f * u, 2f * u));
+                    g.setColor(col);
+                    g.fill(new Ellipse2D.Float(x + (kx[k] - 0.45f) * u, y + (ys[k] - 0.45f) * u, 0.9f * u, 0.9f * u));
+                }
                 break;
             }
             default: { // bar chart
@@ -325,26 +400,34 @@ public class VirtualOS extends JPanel {
 
     private final Desktop desktop = new Desktop();
     private final List<DesktopIcon> icons = new ArrayList<>();
-    private final CalendarWidget calendar = new CalendarWidget();
+    private boolean autoArrange = true;
+    private JPanel taskbar;
+    private Runnable personalizeSync = () -> { };
+    final App personalizeApp = new App("Personalize", new Color(0x7e57c2), 8, () -> new PersonalizePanel());
     private final SystemWidget system = new SystemWidget();
     private final Map<App, JInternalFrame> windows = new LinkedHashMap<>();
     private final Map<JInternalFrame, JToggleButton> buttons = new HashMap<>();
+    private final List<JInternalFrame> hiddenByShowDesktop = new ArrayList<>();
     private final JPanel windowStrip = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 7));
+    private final JLabel openCountLabel = new JLabel();
     private final BatteryLabel battery = new BatteryLabel();
     private final ClockLabel clock = new ClockLabel();
     private final SearchField search = new SearchField();
+    private final Map<LocalDate, List<Reminder>> reminders = new HashMap<>();
+    private JPopupMenu calendarPopup;
     private JPopupMenu suggestions;
     private int cascade = 0;
 
     public VirtualOS() {
         setLayout(new BorderLayout());
+        IconStyle.load(PREFS);
         desktop.setDesktopManager(new TaskbarDesktopManager());
         for (App a : APPS) {
             DesktopIcon ic = new DesktopIcon(a);
             icons.add(ic);
-            desktop.add(ic, Integer.valueOf(-5));
+            desktop.add(ic, Integer.valueOf(-4));
         }
-        desktop.add(calendar, Integer.valueOf(-5));
+        loadArrangement();
         desktop.add(system, Integer.valueOf(-5));
         desktop.addComponentListener(new ComponentAdapter() {
             @Override public void componentResized(ComponentEvent e) { relayout(); }
@@ -356,68 +439,347 @@ public class VirtualOS extends JPanel {
             @Override public void mouseReleased(MouseEvent e) { if (e.isPopupTrigger()) desktopMenu(e); }
         });
         add(desktop, BorderLayout.CENTER);
-        add(buildTaskbar(), BorderLayout.SOUTH);
+        taskbar = buildTaskbar();
+        add(taskbar, BorderLayout.SOUTH);
         loadWallpaper();
+        Theme.addListener(this::onThemeChanged);
+        updateOpenCount();
 
-        new javax.swing.Timer(30000, e -> calendar.repaint()).start();
         startBatteryPoller();
     }
 
+    // --------------------------------------------------------- process count
+    private int openProcessCount() {
+        int count = 0;
+        for (JInternalFrame f : windows.values()) {
+            if (f != null && !f.isClosed()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private List<String> openProcessNames() {
+        List<String> names = new ArrayList<>();
+        for (Map.Entry<App, JInternalFrame> entry : windows.entrySet()) {
+            JInternalFrame f = entry.getValue();
+            if (f != null && !f.isClosed()) {
+                String state = (f.isIcon() || !f.isVisible()) ? " [Hidden]" : "";
+                names.add(entry.getKey().title + state);
+            }
+        }
+        return names;
+    }
+
+    private void updateOpenCount() {
+        int count = openProcessCount();
+        openCountLabel.setText("Open: " + count);
+        openCountLabel.setToolTipText(count + (count == 1 ? " open process" : " open processes"));
+        openCountLabel.repaint();
+    }
+
+    private void toggleShowDesktop() {
+        List<JInternalFrame> currentlyVisible = new ArrayList<>();
+        for (JInternalFrame f : windows.values()) {
+            if (f != null && !f.isClosed() && f.isVisible() && !f.isIcon()) {
+                currentlyVisible.add(f);
+            }
+        }
+
+        if (!currentlyVisible.isEmpty()) {
+            hiddenByShowDesktop.clear();
+            for (JInternalFrame f : currentlyVisible) {
+                f.setVisible(false);
+                hiddenByShowDesktop.add(f);
+            }
+        } else if (!hiddenByShowDesktop.isEmpty()) {
+            for (JInternalFrame f : new ArrayList<>(hiddenByShowDesktop)) {
+                if (!f.isClosed()) {
+                    f.setVisible(true);
+                    f.toFront();
+                }
+            }
+            hiddenByShowDesktop.clear();
+        }
+        syncButtons();
+    }
+
+    private JPanel buildJureveVantagePanel() {
+        JPanel panel = new JPanel(new BorderLayout(8, 8));
+        panel.setBorder(new EmptyBorder(12, 14, 12, 14));
+
+        JTextArea area = new JTextArea();
+        area.setEditable(false);
+        area.setFont(Theme.MONO);
+        area.setBackground(Theme.INSET);
+        area.setForeground(Theme.TEXT);
+
+        Runnable refresh = () -> {
+            int count = openProcessCount();
+            List<String> openNames = openProcessNames();
+            Runtime rt = Runtime.getRuntime();
+            long totalMb = rt.totalMemory() / (1024 * 1024);
+            long freeMb = rt.freeMemory() / (1024 * 1024);
+            long usedMb = totalMb - freeMb;
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("OS Name         : ").append(OS_NAME).append("\n");
+            sb.append("Host System     : ").append(System.getProperty("os.name")).append(" (")
+              .append(System.getProperty("os.arch")).append(")\n");
+            sb.append("Java Runtime    : ").append(System.getProperty("java.version")).append("\n");
+            sb.append("Available Cores : ").append(rt.availableProcessors()).append("\n");
+            sb.append("JVM Memory      : ").append(usedMb).append(" MB used / ").append(totalMb).append(" MB allocated\n");
+            sb.append("Open Processes  : ").append(count).append("\n");
+            sb.append("Running Apps    : ").append(openNames.isEmpty() ? "None" : String.join(", ", openNames)).append("\n");
+            area.setText(sb.toString());
+        };
+
+        refresh.run();
+        javax.swing.Timer timer = new javax.swing.Timer(1500, e -> refresh.run());
+        timer.start();
+        panel.addHierarchyListener(e -> {
+            if ((e.getChangeFlags() & HierarchyEvent.DISPLAYABILITY_CHANGED) != 0 && !panel.isDisplayable()) {
+                timer.stop();
+            }
+        });
+
+        JButton refreshBtn = Common.softButton("Refresh", refresh);
+        JPanel south = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        south.setOpaque(false);
+        south.add(refreshBtn);
+
+        panel.add(new JScrollPane(area), BorderLayout.CENTER);
+        panel.add(south, BorderLayout.SOUTH);
+        return panel;
+    }
+
     // ---------------------------------------------------------------- layout
+    private static final int MARGIN_X = 10, MARGIN_Y = 8;
+
+    private int cellW() { return Math.max(84, IconStyle.size + 52); }
+    private int cellH() { return IconStyle.labels ? IconStyle.size + 40 : IconStyle.size + 18; }
+    private int maxRows() { return Math.max(1, (desktop.getHeight() - MARGIN_Y) / cellH()); }
+    private int maxCols() { return Math.max(1, (desktop.getWidth() - MARGIN_X) / cellW()); }
+
     void relayout() {
         int w = desktop.getWidth(), h = desktop.getHeight();
-        int cellW = 96, cellH = 84, top = 8, x = 10, y = top;
-        for (DesktopIcon ic : icons) {
-            if (y + cellH > h && y > top) { y = top; x += cellW; }
-            ic.setBounds(x, y, cellW, cellH);
-            y += cellH;
+        if (w <= 0 || h <= 0) return;
+        int rows = maxRows(), cols = maxCols(), cw = cellW(), ch = cellH();
+        if (autoArrange || rows * cols < icons.size()) {
+            flowCells(rows);
+            for (DesktopIcon ic : icons) ic.setBounds(MARGIN_X + ic.col * cw, MARGIN_Y + ic.row * ch, cw, ch);
+        } else {
+            boolean[][] used = new boolean[cols][rows];
+            for (DesktopIcon ic : icons) {
+                int c = Math.max(0, Math.min(cols - 1, ic.col)), r = Math.max(0, Math.min(rows - 1, ic.row));
+                if (used[c][r]) { int[] f = nearestFree(used, c, r); c = f[0]; r = f[1]; }
+                used[c][r] = true;
+                ic.setBounds(MARGIN_X + c * cw, MARGIN_Y + r * ch, cw, ch);
+            }
         }
-        Dimension cd = calendar.getPreferredSize(), sd = system.getPreferredSize();
-        calendar.setBounds(w - cd.width - 14, 12, cd.width, cd.height);
-        system.setBounds(w - sd.width - 14, 12 + cd.height + 12, sd.width, sd.height);
+        Dimension sd = system.getPreferredSize();
+        system.setBounds(w - sd.width - 14, 12, sd.width, sd.height);
+        desktop.repaint();
+    }
+
+    private void flowCells(int rows) {
+        int i = 0;
+        for (DesktopIcon ic : icons) { ic.col = i / rows; ic.row = i % rows; i++; }
+    }
+
+    private static int[] nearestFree(boolean[][] used, int c0, int r0) {
+        int bestC = -1, bestR = -1, best = Integer.MAX_VALUE;
+        for (int c = 0; c < used.length; c++)
+            for (int r = 0; r < used[c].length; r++) {
+                if (used[c][r]) continue;
+                int d = (c - c0) * (c - c0) + (r - r0) * (r - r0);
+                if (d < best) { best = d; bestC = c; bestR = r; }
+            }
+        return new int[]{bestC, bestR};
     }
 
     private void select(DesktopIcon sel) {
         for (DesktopIcon ic : icons) ic.setSelected(ic == sel);
     }
 
+    private void dropIcon(DesktopIcon ic) {
+        int cols = maxCols(), rows = maxRows(), cw = cellW(), ch = cellH();
+        int c = Math.max(0, Math.min(cols - 1, Math.round((ic.getX() - MARGIN_X) / (float) cw)));
+        int r = Math.max(0, Math.min(rows - 1, Math.round((ic.getY() - MARGIN_Y) / (float) ch)));
+        if (autoArrange) {
+            int index = Math.max(0, Math.min(icons.size() - 1, c * rows + r));
+            icons.remove(ic);
+            icons.add(index, ic);
+        } else {
+            boolean[][] used = new boolean[cols][rows];
+            for (DesktopIcon o : icons) {
+                if (o == ic) continue;
+                int oc = Math.max(0, Math.min(cols - 1, Math.round((o.getX() - MARGIN_X) / (float) cw)));
+                int or = Math.max(0, Math.min(rows - 1, Math.round((o.getY() - MARGIN_Y) / (float) ch)));
+                used[oc][or] = true;
+            }
+            if (used[c][r]) { int[] f = nearestFree(used, c, r); c = f[0]; r = f[1]; }
+            ic.col = c; ic.row = r;
+        }
+        relayout();
+        saveArrangement();
+    }
+
+    void setAutoArrange(boolean on) {
+        if (on == autoArrange) return;
+        if (!on) { flowCellsFromScreen(); }
+        autoArrange = on;
+        relayout();
+        saveArrangement();
+        personalizeSync.run();
+    }
+
+    private void flowCellsFromScreen() {
+        int cw = cellW(), ch = cellH();
+        for (DesktopIcon ic : icons) {
+            ic.col = Math.max(0, Math.round((ic.getX() - MARGIN_X) / (float) cw));
+            ic.row = Math.max(0, Math.round((ic.getY() - MARGIN_Y) / (float) ch));
+        }
+    }
+
+    void sortIcons(Comparator<DesktopIcon> cmp) {
+        icons.sort(cmp);
+        flowCells(maxRows());
+        relayout();
+        saveArrangement();
+    }
+
+    void sortByName(boolean ascending) {
+        sortIcons((x, y) -> ascending ? x.app.title.compareToIgnoreCase(y.app.title) : y.app.title.compareToIgnoreCase(x.app.title));
+    }
+
+    void sortByColor() {
+        sortIcons(Comparator.<DesktopIcon>comparingDouble(ic -> {
+            Color c = colorOf(ic.app);
+            return Color.RGBtoHSB(c.getRed(), c.getGreen(), c.getBlue(), null)[0];
+        }).thenComparing(ic -> ic.app.title));
+    }
+
+    void sortDefault() { sortIcons(Comparator.comparingInt(ic -> APPS.indexOf(ic.app))); }
+
+    private void saveArrangement() {
+        try {
+            StringBuilder order = new StringBuilder(), cells = new StringBuilder();
+            for (DesktopIcon ic : icons) {
+                if (order.length() > 0) { order.append('|'); cells.append('|'); }
+                order.append(ic.app.title);
+                cells.append(ic.app.title).append('=').append(ic.col).append(',').append(ic.row);
+            }
+            PREFS.put("icons.order", order.toString());
+            PREFS.put("icons.cells", cells.toString());
+            PREFS.putBoolean("icons.auto", autoArrange);
+        } catch (Exception ignored) { }
+    }
+
+    private void loadArrangement() {
+        try {
+            autoArrange = PREFS.getBoolean("icons.auto", true);
+            String order = PREFS.get("icons.order", "");
+            if (!order.isEmpty()) {
+                List<DesktopIcon> sorted = new ArrayList<>();
+                for (String t : order.split("\\|"))
+                    for (DesktopIcon ic : icons) if (ic.app.title.equals(t) && !sorted.contains(ic)) sorted.add(ic);
+                for (DesktopIcon ic : icons) if (!sorted.contains(ic)) sorted.add(ic);
+                icons.clear();
+                icons.addAll(sorted);
+            }
+            String cells = PREFS.get("icons.cells", "");
+            if (!cells.isEmpty()) for (String part : cells.split("\\|")) {
+                int eq = part.lastIndexOf('='), cm = part.lastIndexOf(',');
+                if (eq < 0 || cm < eq) continue;
+                for (DesktopIcon ic : icons) if (ic.app.title.equals(part.substring(0, eq))) {
+                    ic.col = Integer.parseInt(part.substring(eq + 1, cm));
+                    ic.row = Integer.parseInt(part.substring(cm + 1));
+                }
+            }
+        } catch (Exception ignored) { }
+    }
+
+    // ------------------------------------------------------- icon look + theme changes
+    void iconStyleChanged() {
+        IconStyle.save(PREFS);
+        for (Map.Entry<App, JInternalFrame> e : windows.entrySet()) {
+            e.getValue().setFrameIcon(iconFor(e.getKey(), 16));
+            JToggleButton b = buttons.get(e.getValue());
+            if (b != null) b.setIcon(iconFor(e.getKey(), 16));
+        }
+        relayout();
+        desktop.repaint();
+        windowStrip.repaint();
+        personalizeSync.run();
+    }
+
+    void setMode(Theme.Mode m) { if (m != Theme.mode()) Theme.change(Theme.scheme(), m); }
+    void setScheme(Theme.Scheme sc) { if (sc != Theme.scheme()) Theme.change(sc, Theme.mode()); }
+    void toggleMode() { setMode(Theme.isDark() ? Theme.Mode.LIGHT : Theme.Mode.DARK); }
+
+    private void onThemeChanged() {
+        hideSuggestions();
+        Theme.recolor(this);
+        for (JInternalFrame f : windows.values()) f.repaint();
+        relayout();
+        desktop.repaint();
+        taskbar.repaint();
+        repaint();
+        personalizeSync.run();
+    }
+
     // --------------------------------------------------------------- windows
     void open(App a) {
-        JPanel content = a.factory.get();
-        if (content == null) {
-            return; 
-        }
         JInternalFrame existing = windows.get(a);
         if (existing != null && !existing.isClosed()) { restore(existing); return; }
-        
+
+        JPanel content;
+        if (OS_NAME.equals(a.title)) {
+            content = buildJureveVantagePanel();
+        } else {
+            content = a.factory.get();
+            if (content == null) return;
+        }
+
         final JInternalFrame f = new JInternalFrame(a.title, true, true, true, true);
         f.setFrameIcon(iconFor(a, 16));
         f.setDefaultCloseOperation(JInternalFrame.DISPOSE_ON_CLOSE);
         f.setContentPane(content);
 
-        // --- AUTO-SIZE, PACK, AND CENTER THE WINDOW ---
         if (a.title.equals(GAME_NAME)) {
-            f.pack(); // Automatically sizes window based on the downscaled preferred size + title bar
+            f.pack();
             int x = (desktop.getWidth() - f.getWidth()) / 2;
             int y = (desktop.getHeight() - f.getHeight()) / 2;
             f.setLocation(Math.max(0, x), Math.max(0, y));
         } else {
             int dw = Math.max(400, desktop.getWidth()), dh = Math.max(300, desktop.getHeight());
-            int w = Math.min(1000, dw - 40), h = Math.min(700, dh - 20);
+            boolean small = a == personalizeApp || OS_NAME.equals(a.title);
+            int w = Math.min(small ? 560 : 1000, dw - 40), h = Math.min(small ? 520 : 700, dh - 20);
             f.setSize(w, h);
-            
+
             int off = (cascade++ % 6) * 28;
             f.setLocation(Math.min(110 + off, Math.max(0, dw - w)), Math.min(16 + off, Math.max(0, dh - h)));
         }
-        // ----------------------------------------------
 
         desktop.add(f);
         f.setVisible(true);
         windows.put(a, f);
+        updateOpenCount();
 
-        JToggleButton b = new JToggleButton(a.title, iconFor(a, 16));
-        b.setFocusable(false);
-        b.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 12));
+        f.addInternalFrameListener(new InternalFrameAdapter() {
+            @Override public void internalFrameClosed(InternalFrameEvent e) {
+                if (windows.get(a) == f) windows.remove(a);
+                hiddenByShowDesktop.remove(f);
+                JToggleButton btn = buttons.remove(f);
+                if (btn != null) { windowStrip.remove(btn); windowStrip.revalidate(); windowStrip.repaint(); }
+                updateOpenCount();
+            }
+            @Override public void internalFrameActivated(InternalFrameEvent e) { syncButtons(); }
+            @Override public void internalFrameDeactivated(InternalFrameEvent e) { syncButtons(); }
+        });
+
+        JToggleButton b = new TaskButton(a.title, iconFor(a, 16));
         b.setPreferredSize(new Dimension(160, 30));
         b.addActionListener(ev -> {
             try {
@@ -450,7 +812,42 @@ public class VirtualOS extends JPanel {
             e.getValue().setSelected(e.getKey().isSelected() && !e.getKey().isIcon());
     }
 
-    /** Minimised windows simply hide; the taskbar button brings them back. */
+    private static final class TaskButton extends JToggleButton {
+        private boolean hover;
+
+        TaskButton(String text, Icon icon) {
+            super(text, icon);
+            setContentAreaFilled(false);
+            setBorderPainted(false);
+            setFocusPainted(false);
+            setFocusable(false);
+            setOpaque(false);
+            setHorizontalAlignment(SwingConstants.LEFT);
+            setIconTextGap(8);
+            setBorder(new EmptyBorder(0, 10, 0, 8));
+            setFont(Theme.BASE);
+            addMouseListener(new MouseAdapter() {
+                @Override public void mouseEntered(MouseEvent e) { hover = true; repaint(); }
+                @Override public void mouseExited(MouseEvent e) { hover = false; repaint(); }
+            });
+        }
+
+        @Override public Color getForeground() { return Color.WHITE; }
+
+        @Override protected void paintComponent(Graphics g0) {
+            Graphics2D g = (Graphics2D) g0.create();
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setColor(new Color(255, 255, 255, isSelected() ? 72 : hover ? 50 : 28));
+            g.fill(new RoundRectangle2D.Float(0, 0, getWidth() - 1, getHeight() - 1, 12, 12));
+            if (isSelected()) {
+                g.setColor(new Color(255, 255, 255, 110));
+                g.draw(new RoundRectangle2D.Float(0, 0, getWidth() - 1, getHeight() - 1, 12, 12));
+            }
+            g.dispose();
+            super.paintComponent(g0);
+        }
+    }
+
     private final class TaskbarDesktopManager extends DefaultDesktopManager {
         @Override public void iconifyFrame(JInternalFrame f) {
             f.setVisible(false);
@@ -498,16 +895,52 @@ public class VirtualOS extends JPanel {
 
     private void desktopMenu(MouseEvent e) {
         JPopupMenu m = new JPopupMenu();
-        JMenuItem c = new JMenuItem("Change wallpaper...");
-        c.addActionListener(ev -> chooseWallpaper());
-        JMenuItem r = new JMenuItem("Reset wallpaper");
-        r.addActionListener(ev -> resetWallpaper());
-        m.add(c);
-        m.add(r);
+        JMenu sort = new JMenu("Sort icons by");
+        addItem(sort, "Name (A to Z)", () -> sortByName(true));
+        addItem(sort, "Name (Z to A)", () -> sortByName(false));
+        addItem(sort, "Color", this::sortByColor);
+        addItem(sort, "Default order", this::sortDefault);
+        m.add(sort);
+        JCheckBoxMenuItem auto = new JCheckBoxMenuItem("Auto-arrange icons", autoArrange);
+        auto.addActionListener(ev -> setAutoArrange(auto.isSelected()));
+        m.add(auto);
+        JMenu size = new JMenu("Icon size");
+        ButtonGroup sg = new ButtonGroup();
+        for (int[] o : new int[][]{{IconStyle.SMALL}, {IconStyle.MEDIUM}, {IconStyle.LARGE}}) {
+            String name = o[0] == IconStyle.SMALL ? "Small" : o[0] == IconStyle.MEDIUM ? "Medium" : "Large";
+            JRadioButtonMenuItem it = new JRadioButtonMenuItem(name, IconStyle.size == o[0]);
+            it.addActionListener(ev -> { IconStyle.size = o[0]; iconStyleChanged(); });
+            sg.add(it);
+            size.add(it);
+        }
+        m.add(size);
+        JCheckBoxMenuItem lbl = new JCheckBoxMenuItem("Show icon names", IconStyle.labels);
+        lbl.addActionListener(ev -> { IconStyle.labels = lbl.isSelected(); iconStyleChanged(); });
+        m.add(lbl);
+        m.addSeparator();
+        addItem(m, Theme.isDark() ? "Switch to light mode" : "Switch to dark mode", this::toggleMode);
+        JMenu themes = new JMenu("Theme");
+        ButtonGroup tg = new ButtonGroup();
+        for (Theme.Scheme sc : Theme.SCHEMES) {
+            JRadioButtonMenuItem it = new JRadioButtonMenuItem(sc.name, sc == Theme.scheme());
+            it.addActionListener(ev -> setScheme(sc));
+            tg.add(it);
+            themes.add(it);
+        }
+        m.add(themes);
+        addItem(m, "Personalize...", () -> open(personalizeApp));
+        m.addSeparator();
+        addItem(m, "Change wallpaper...", this::chooseWallpaper);
+        addItem(m, "Reset wallpaper", this::resetWallpaper);
         m.show(e.getComponent(), e.getX(), e.getY());
     }
 
-    /** Desktop background: wallpaper (cover-scaled) or a default gradient. */
+    private static void addItem(Container menu, String text, Runnable action) {
+        JMenuItem it = new JMenuItem(text);
+        it.addActionListener(ev -> action.run());
+        menu.add(it);
+    }
+
     private static final class Desktop extends JDesktopPane {
         private BufferedImage wallpaper, scaled;
 
@@ -533,7 +966,7 @@ public class VirtualOS extends JPanel {
                 }
                 g.drawImage(scaled, 0, 0, null);
             } else {
-                g.setPaint(new GradientPaint(0, 0, new Color(0x0a2a6b), w, h, new Color(0x1ea1c9)));
+                g.setPaint(new GradientPaint(0, 0, Theme.DESK_A, w, h, Theme.DESK_B));
                 g.fillRect(0, 0, w, h);
                 g.setColor(new Color(255, 255, 255, 18));
                 g.fill(new Ellipse2D.Double(w * 0.35, -h * 0.3, h * 1.2, h * 1.2));
@@ -541,7 +974,7 @@ public class VirtualOS extends JPanel {
                 g.fill(new Ellipse2D.Double(w * 0.1, h * 0.45, h * 0.9, h * 0.9));
                 g.setColor(new Color(255, 255, 255, 38));
                 g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 34));
-                String t = "VirtualOS";
+                String t = OS_NAME;
                 g.drawString(t, w - g.getFontMetrics().stringWidth(t) - 24, h - 22);
             }
             g.dispose();
@@ -552,6 +985,9 @@ public class VirtualOS extends JPanel {
     private final class DesktopIcon extends JComponent {
         private final App app;
         private boolean selected;
+        int col, row;
+        private Point pressAt, startAt;
+        private boolean dragging;
 
         DesktopIcon(App app) {
             this.app = app;
@@ -560,18 +996,48 @@ public class VirtualOS extends JPanel {
             addMouseListener(new MouseAdapter() {
                 @Override public void mousePressed(MouseEvent e) {
                     select(DesktopIcon.this);
-                    if (e.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(e)) open(app);
-                    else if (e.isPopupTrigger()) menu(e);
+                    if (e.isPopupTrigger()) { menu(e); return; }
+                    if (!SwingUtilities.isLeftMouseButton(e)) return;
+                    if (e.getClickCount() == 2) { pressAt = null; open(app); return; }
+                    pressAt = SwingUtilities.convertPoint(DesktopIcon.this, e.getPoint(), desktop);
+                    startAt = getLocation();
+                    dragging = false;
                 }
-                @Override public void mouseReleased(MouseEvent e) { if (e.isPopupTrigger()) menu(e); }
+                @Override public void mouseReleased(MouseEvent e) {
+                    if (e.isPopupTrigger()) { menu(e); return; }
+                    boolean was = dragging;
+                    dragging = false;
+                    pressAt = null;
+                    if (was) dropIcon(DesktopIcon.this);
+                }
+            });
+            addMouseMotionListener(new MouseMotionAdapter() {
+                @Override public void mouseDragged(MouseEvent e) {
+                    if (pressAt == null) return;
+                    Point p = SwingUtilities.convertPoint(DesktopIcon.this, e.getPoint(), desktop);
+                    int dx = p.x - pressAt.x, dy = p.y - pressAt.y;
+                    if (!dragging && Math.abs(dx) + Math.abs(dy) < 6) return;
+                    dragging = true;
+                    int nx = Math.max(0, Math.min(desktop.getWidth() - getWidth(), startAt.x + dx));
+                    int ny = Math.max(0, Math.min(desktop.getHeight() - getHeight(), startAt.y + dy));
+                    setLocation(nx, ny);
+                }
             });
         }
 
         private void menu(MouseEvent e) {
             JPopupMenu m = new JPopupMenu();
-            JMenuItem o = new JMenuItem("Open");
-            o.addActionListener(ev -> open(app));
-            m.add(o);
+            addItem(m, "Open", () -> open(app));
+            m.addSeparator();
+            addItem(m, "Change icon color...", () -> {
+                Color c = JColorChooser.showDialog(VirtualOS.this, "Icon color - " + app.title, colorOf(app));
+                if (c != null) { IconStyle.custom.put(app.title, c.getRGB() & 0xFFFFFF); iconStyleChanged(); }
+            });
+            JMenuItem reset = new JMenuItem("Reset icon color");
+            reset.setEnabled(IconStyle.custom.containsKey(app.title));
+            reset.addActionListener(ev -> { IconStyle.custom.remove(app.title); iconStyleChanged(); });
+            m.add(reset);
+            addItem(m, "Personalize...", () -> open(personalizeApp));
             m.show(this, e.getX(), e.getY());
         }
 
@@ -583,31 +1049,32 @@ public class VirtualOS extends JPanel {
             Graphics2D g = (Graphics2D) g0.create();
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-            int w = getWidth(), h = getHeight();
-            if (selected) {
-                g.setColor(new Color(255, 255, 255, 60));
+            int w = getWidth(), h = getHeight(), sz = IconStyle.size;
+            if (selected || dragging) {
+                g.setColor(new Color(255, 255, 255, dragging ? 80 : 60));
                 g.fill(new RoundRectangle2D.Float(4, 2, w - 9, h - 5, 10, 10));
                 g.setColor(new Color(255, 255, 255, 120));
                 g.draw(new RoundRectangle2D.Float(4, 2, w - 9, h - 5, 10, 10));
             }
-            paintGlyph(g, app, (w - 44) / 2f, 4, 44);
-            int size = 12;
-            g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, size));
-            FontMetrics fm = g.getFontMetrics();
-            String[] lines = wrap(app.title, fm, w - 8);
-            // a single long word (e.g. "Multiprogramming") shrinks the font until it fits
-            while (lines.length == 1 && fm.stringWidth(lines[0]) > w - 8 && size > 9) {
-                g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, --size));
-                fm = g.getFontMetrics();
-            }
-            int y = 4 + 44 + 14;
-            for (String line : lines) {
-                int x = (w - fm.stringWidth(line)) / 2;
-                g.setColor(new Color(0, 0, 0, 170));
-                g.drawString(line, x + 1, y + 1);
-                g.setColor(Color.WHITE);
-                g.drawString(line, x, y);
-                y += fm.getHeight() - 1;
+            paintGlyph(g, app, (w - sz) / 2f, 4, sz);
+            if (IconStyle.labels) {
+                int size = 12;
+                g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, size));
+                FontMetrics fm = g.getFontMetrics();
+                String[] lines = wrap(app.title, fm, w - 8);
+                while (lines.length == 1 && fm.stringWidth(lines[0]) > w - 8 && size > 9) {
+                    g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, --size));
+                    fm = g.getFontMetrics();
+                }
+                int y = 4 + sz + 14;
+                for (String line : lines) {
+                    int x = (w - fm.stringWidth(line)) / 2;
+                    g.setColor(new Color(0, 0, 0, 170));
+                    g.drawString(line, x + 1, y + 1);
+                    g.setColor(Color.WHITE);
+                    g.drawString(line, x, y);
+                    y += fm.getHeight() - 1;
+                }
             }
             g.dispose();
         }
@@ -622,7 +1089,6 @@ public class VirtualOS extends JPanel {
         }
     }
 
-    /** Translucent rounded card used by the desktop widgets. */
     private abstract static class Card extends JComponent {
         Card(int w, int h) {
             setPreferredSize(new Dimension(w, h));
@@ -634,51 +1100,15 @@ public class VirtualOS extends JPanel {
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             RoundRectangle2D.Float shape = new RoundRectangle2D.Float(0, 0, getWidth() - 1, getHeight() - 1, 18, 18);
-            g.setColor(new Color(16, 26, 54, 185));
+            g.setColor(Theme.WIDGET_BG);
             g.fill(shape);
-            g.setColor(new Color(255, 255, 255, 70));
+            g.setColor(Theme.WIDGET_TRACK);
             g.draw(shape);
             paintCard(g);
             g.dispose();
         }
 
         abstract void paintCard(Graphics2D g);
-    }
-
-    private static final class CalendarWidget extends Card {
-        CalendarWidget() { super(230, 196); }
-
-        @Override void paintCard(Graphics2D g) {
-            LocalDate today = LocalDate.now();
-            YearMonth ym = YearMonth.from(today);
-            g.setColor(Color.WHITE);
-            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 14));
-            g.drawString(ym.getMonth().getDisplayName(TextStyle.FULL, Locale.ENGLISH) + " " + ym.getYear(), 14, 26);
-            String[] days = {"Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"};
-            double cw = (getWidth() - 20) / 7.0;
-            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 11));
-            FontMetrics fm = g.getFontMetrics();
-            g.setColor(new Color(255, 255, 255, 170));
-            for (int i = 0; i < 7; i++)
-                g.drawString(days[i], (float) (10 + i * cw + cw / 2 - fm.stringWidth(days[i]) / 2.0), 50);
-            g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 12));
-            fm = g.getFontMetrics();
-            int offset = ym.atDay(1).getDayOfWeek().getValue() % 7;
-            for (int d = 1; d <= ym.lengthOfMonth(); d++) {
-                int idx = offset + d - 1, col = idx % 7, row = idx / 7;
-                double cx = 10 + col * cw + cw / 2;
-                int cy = 74 + row * 21;
-                String s = String.valueOf(d);
-                if (d == today.getDayOfMonth()) {
-                    g.setColor(new Color(0x3b82f6));
-                    g.fill(new Ellipse2D.Double(cx - 10, cy - 14, 20, 20));
-                    g.setColor(new Color(255, 255, 255, 200));
-                    g.draw(new Ellipse2D.Double(cx - 10, cy - 14, 20, 20));
-                }
-                g.setColor(Color.WHITE);
-                g.drawString(s, (float) (cx - fm.stringWidth(s) / 2.0), cy);
-            }
-        }
     }
 
     private static final class SystemWidget extends Card {
@@ -704,29 +1134,144 @@ public class VirtualOS extends JPanel {
         }
 
         private void bar(Graphics2D g, String label, double frac, int y, Color c) {
-            g.setColor(Color.WHITE);
+            g.setColor(Theme.WIDGET_TEXT);
             g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 11));
             g.drawString(label, 14, y + 9);
             int x = 48, w = getWidth() - x - 52;
-            g.setColor(new Color(255, 255, 255, 70));
+            g.setColor(Theme.WIDGET_TRACK);
             g.fill(new RoundRectangle2D.Float(x, y, w, 9, 9, 9));
             g.setColor(c);
             g.fill(new RoundRectangle2D.Float(x, y, (float) Math.max(6, w * Math.min(1, frac)), 9, 9, 9));
-            g.setColor(Color.WHITE);
+            g.setColor(Theme.WIDGET_TEXT);
             g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 11));
             String p = Math.round(frac * 100) + "%";
             g.drawString(p, getWidth() - 14 - g.getFontMetrics().stringWidth(p), y + 9);
         }
 
         @Override void paintCard(Graphics2D g) {
-            g.setColor(Color.WHITE);
+            g.setColor(Theme.WIDGET_TEXT);
             g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 14));
             g.drawString("System", 14, 26);
             bar(g, "CPU", cpu, 38, new Color(0x4cc764));
             bar(g, "RAM", ram, 58, new Color(0xf2c230));
-            g.setColor(new Color(255, 255, 255, 170));
+            g.setColor(Theme.WIDGET_MUTED);
             g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 10));
             g.drawString(String.format("%.1f of %.1f GB in use", usedGb, totalGb), 14, 90);
+        }
+    }
+
+    // ------------------------------------------------- popup calendar & reminders
+    private void toggleCalendarPopup() {
+        if (calendarPopup != null && calendarPopup.isVisible()) {
+            calendarPopup.setVisible(false);
+            return;
+        }
+        calendarPopup = new JPopupMenu();
+        calendarPopup.setBorder(BorderFactory.createLineBorder(Theme.BORDER, 1));
+        calendarPopup.add(new CalendarPopupPanel());
+        calendarPopup.pack();
+        int px = Math.max(0, clock.getWidth() - calendarPopup.getPreferredSize().width);
+        int py = -calendarPopup.getPreferredSize().height;
+        calendarPopup.show(clock, px, py);
+    }
+
+    private final class CalendarPopupPanel extends JPanel {
+        private LocalDate selectedDate = LocalDate.now();
+        private final JLabel selectedHeader = new JLabel();
+        private final JTextField timeInput = new JTextField("09:00 AM", 8);
+        private final JTextField noteInput = new JTextField(15);
+        private final DefaultListModel<Reminder> reminderModel = new DefaultListModel<>();
+
+        CalendarPopupPanel() {
+            setLayout(new BorderLayout(6, 6));
+            setBorder(new EmptyBorder(10, 10, 10, 10));
+            setBackground(Theme.CARD);
+            setPreferredSize(new Dimension(320, 420));
+
+            YearMonth ym = YearMonth.from(LocalDate.now());
+            JLabel title = new JLabel(
+                    ym.getMonth().getDisplayName(TextStyle.FULL, Locale.ENGLISH) + " " + ym.getYear(),
+                    SwingConstants.CENTER
+            );
+            title.setFont(Theme.BOLD);
+            add(title, BorderLayout.NORTH);
+
+            JPanel grid = new JPanel(new GridLayout(0, 7, 3, 3));
+            grid.setOpaque(false);
+            for (String dayName : new String[]{"Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"}) {
+                JLabel lbl = new JLabel(dayName, SwingConstants.CENTER);
+                lbl.setFont(Theme.SMALL);
+                lbl.setForeground(Theme.MUTED);
+                grid.add(lbl);
+            }
+
+            int offset = ym.atDay(1).getDayOfWeek().getValue() % 7;
+            for (int i = 0; i < offset; i++) {
+                grid.add(new JLabel(""));
+            }
+
+            for (int day = 1; day <= ym.lengthOfMonth(); day++) {
+                LocalDate date = ym.atDay(day);
+                JButton btn = new JButton(String.valueOf(day));
+                btn.setFont(Theme.SMALL);
+                btn.setMargin(new Insets(2, 2, 2, 2));
+                btn.addActionListener(e -> selectDate(date));
+                grid.add(btn);
+            }
+            add(grid, BorderLayout.CENTER);
+
+            JPanel bottom = new JPanel(new BorderLayout(4, 4));
+            bottom.setOpaque(false);
+
+            selectedHeader.setFont(Theme.BOLD);
+            bottom.add(selectedHeader, BorderLayout.NORTH);
+
+            JList<Reminder> list = new JList<>(reminderModel);
+            list.setFont(Theme.SMALL);
+            list.setVisibleRowCount(4);
+            bottom.add(new JScrollPane(list), BorderLayout.CENTER);
+
+            JPanel controls = new JPanel(new BorderLayout(4, 4));
+            controls.setOpaque(false);
+
+            JPanel fields = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+            fields.setOpaque(false);
+            fields.add(new JLabel("Time:"));
+            fields.add(timeInput);
+            fields.add(new JLabel("Note:"));
+            fields.add(noteInput);
+
+            JButton addBtn = Common.button("Add Reminder", () -> {
+                String t = timeInput.getText().trim();
+                String n = noteInput.getText().trim();
+                if (t.isEmpty() || n.isEmpty()) return;
+                reminders.computeIfAbsent(selectedDate, k -> new ArrayList<>()).add(new Reminder(t, n));
+                noteInput.setText("");
+                refreshList();
+            });
+
+            controls.add(fields, BorderLayout.CENTER);
+            controls.add(addBtn, BorderLayout.SOUTH);
+            bottom.add(controls, BorderLayout.SOUTH);
+
+            add(bottom, BorderLayout.SOUTH);
+            selectDate(LocalDate.now());
+        }
+
+        private void selectDate(LocalDate date) {
+            this.selectedDate = date;
+            selectedHeader.setText("Reminders - " + date);
+            refreshList();
+        }
+
+        private void refreshList() {
+            reminderModel.clear();
+            List<Reminder> items = reminders.get(selectedDate);
+            if (items != null) {
+                for (Reminder r : items) {
+                    reminderModel.addElement(r);
+                }
+            }
         }
     }
 
@@ -735,7 +1280,7 @@ public class VirtualOS extends JPanel {
         JPanel bar = new JPanel(new BorderLayout(8, 0)) {
             @Override protected void paintComponent(Graphics g0) {
                 Graphics2D g = (Graphics2D) g0.create();
-                g.setPaint(new GradientPaint(0, 0, new Color(0x2f6fe0), 0, getHeight(), new Color(0x0d3fa6)));
+                g.setPaint(new GradientPaint(0, 0, Theme.TASK_A, 0, getHeight(), Theme.TASK_B));
                 g.fillRect(0, 0, getWidth(), getHeight());
                 g.setColor(new Color(255, 255, 255, 90));
                 g.drawLine(0, 0, getWidth(), 0);
@@ -747,8 +1292,10 @@ public class VirtualOS extends JPanel {
         JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 7));
         left.setOpaque(false);
         StartButton start = new StartButton();
-        JPopupMenu startMenu = buildStartMenu();
-        start.addActionListener(e -> startMenu.show(start, 0, -startMenu.getPreferredSize().height));
+        start.addActionListener(e -> {
+            JPopupMenu startMenu = buildStartMenu();
+            startMenu.show(start, 0, -startMenu.getPreferredSize().height);
+        });
         left.add(start);
         left.add(search);
         search.addKeyListener(new KeyAdapter() {
@@ -771,10 +1318,30 @@ public class VirtualOS extends JPanel {
 
         windowStrip.setOpaque(false);
 
+        openCountLabel.setFont(Theme.BOLD);
+        openCountLabel.setForeground(Color.WHITE);
+        updateOpenCount();
+
+        clock.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        clock.setToolTipText("Click to toggle calendar & reminders");
+        clock.addMouseListener(new MouseAdapter() {
+            @Override public void mouseClicked(MouseEvent e) {
+                if (SwingUtilities.isLeftMouseButton(e)) toggleCalendarPopup();
+            }
+        });
+
+        JButton showDesktopBtn = new JButton("Desktop");
+        showDesktopBtn.setFocusable(false);
+        showDesktopBtn.setToolTipText("Hide or restore all open windows");
+        showDesktopBtn.addActionListener(e -> toggleShowDesktop());
+
         JPanel tray = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 4));
         tray.setOpaque(false);
+        tray.add(openCountLabel);
+        tray.add(new ModeToggle());
         tray.add(battery);
         tray.add(clock);
+        tray.add(showDesktopBtn);
 
         bar.add(left, BorderLayout.WEST);
         bar.add(windowStrip, BorderLayout.CENTER);
@@ -791,19 +1358,21 @@ public class VirtualOS extends JPanel {
 
     private JPopupMenu buildStartMenu() {
         JPopupMenu m = new JPopupMenu();
-        JMenuItem head = new JMenuItem("VirtualOS");
+        JMenuItem head = new JMenuItem(OS_NAME);
         head.setEnabled(false);
         head.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
         m.add(head);
         m.addSeparator();
         for (App a : APPS) m.add(appItem(a, null));
         m.addSeparator();
+        addItem(m, Theme.isDark() ? "Switch to light mode" : "Switch to dark mode", this::toggleMode);
+        addItem(m, "Personalize...", () -> open(personalizeApp));
         JMenuItem wp = new JMenuItem("Change wallpaper...");
         wp.addActionListener(e -> chooseWallpaper());
         m.add(wp);
         JMenuItem off = new JMenuItem("Shut down");
         off.addActionListener(e -> {
-            if (JOptionPane.showConfirmDialog(this, "Close VirtualOS?", "Shut down", JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION)
+            if (JOptionPane.showConfirmDialog(this, "Close " + OS_NAME + "?", "Shut down", JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION)
                 System.exit(0);
         });
         m.add(off);
@@ -860,8 +1429,8 @@ public class VirtualOS extends JPanel {
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             int w = getWidth(), h = getHeight();
-            Color top = hover ? new Color(0x58c862) : new Color(0x3fae49);
-            Color bot = hover ? new Color(0x37a042) : new Color(0x278a33);
+            Color top = hover ? Theme.mix(Theme.START_A, Color.WHITE, .18f) : Theme.START_A;
+            Color bot = hover ? Theme.mix(Theme.START_B, Color.WHITE, .14f) : Theme.START_B;
             g.setPaint(new GradientPaint(0, 0, top, 0, h, bot));
             g.fill(new RoundRectangle2D.Float(0, 0, w - 1, h - 1, 16, 16));
             g.setColor(new Color(0, 0, 0, 70));
@@ -876,6 +1445,9 @@ public class VirtualOS extends JPanel {
     }
 
     private static final class SearchField extends JTextField {
+        @Override public Color getForeground() { return Theme.isDark() ? Color.WHITE : Theme.TEXT; }
+        @Override public Color getCaretColor() { return Theme.isDark() ? Color.WHITE : Theme.TEXT; }
+
         SearchField() {
             setOpaque(false);
             setBorder(new EmptyBorder(2, 12, 2, 30));
@@ -886,7 +1458,7 @@ public class VirtualOS extends JPanel {
         @Override protected void paintComponent(Graphics g0) {
             Graphics2D g = (Graphics2D) g0.create();
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            g.setColor(Color.WHITE);
+            g.setColor(Theme.isDark() ? Theme.mix(Theme.TASK_B, Color.BLACK, .45f) : new Color(0xFCFCFE));
             g.fill(new RoundRectangle2D.Float(0, 0, getWidth() - 1, getHeight() - 1, 14, 14));
             g.setColor(new Color(0, 0, 0, 70));
             g.draw(new RoundRectangle2D.Float(0, 0, getWidth() - 1, getHeight() - 1, 14, 14));
@@ -896,17 +1468,61 @@ public class VirtualOS extends JPanel {
             h.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             h.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             if (getText().isEmpty() && !isFocusOwner()) {
-                h.setColor(new Color(0x888888));
+                h.setColor(Theme.isDark() ? new Color(255, 255, 255, 140) : new Color(0x7A7F8E));
                 h.setFont(getFont());
                 FontMetrics fm = h.getFontMetrics();
                 h.drawString("Search programs", 12, (getHeight() + fm.getAscent() - fm.getDescent()) / 2);
             }
-            h.setColor(new Color(0x2f6fe0));
+            h.setColor(Theme.isDark() ? Color.WHITE : Theme.TASK_A);
             h.setStroke(new BasicStroke(1.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
             int cx = getWidth() - 22, cy = getHeight() / 2 - 2;
             h.draw(new Ellipse2D.Float(cx - 5, cy - 5, 10, 10));
             h.draw(new Line2D.Float(cx + 3, cy + 3, cx + 8, cy + 8));
             h.dispose();
+        }
+    }
+
+    private final class ModeToggle extends JComponent {
+        private boolean hover;
+
+        ModeToggle() {
+            setPreferredSize(new Dimension(34, 36));
+            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            setToolTipText("Switch mode");
+            addMouseListener(new MouseAdapter() {
+                @Override public void mouseEntered(MouseEvent e) { hover = true; repaint(); }
+                @Override public void mouseExited(MouseEvent e) { hover = false; repaint(); }
+                @Override public void mouseClicked(MouseEvent e) { if (SwingUtilities.isLeftMouseButton(e)) toggleMode(); }
+            });
+        }
+
+        @Override public String getToolTipText() {
+            return Theme.isDark() ? "Switch to light mode" : "Switch to dark mode";
+        }
+
+        @Override protected void paintComponent(Graphics g0) {
+            Graphics2D g = (Graphics2D) g0.create();
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+            float cx = getWidth() / 2f, cy = getHeight() / 2f;
+            if (hover) {
+                g.setColor(new Color(255, 255, 255, 50));
+                g.fill(new Ellipse2D.Float(cx - 15, cy - 15, 30, 30));
+            }
+            g.setColor(Color.WHITE);
+            if (Theme.isDark()) {
+                Area moon = new Area(new Ellipse2D.Float(cx - 7, cy - 7, 14, 14));
+                moon.subtract(new Area(new Ellipse2D.Float(cx - 2, cy - 10, 14, 14)));
+                g.fill(moon);
+            } else {
+                g.fill(new Ellipse2D.Float(cx - 4.5f, cy - 4.5f, 9, 9));
+                g.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                for (int k = 0; k < 8; k++) {
+                    double a = k * Math.PI / 4;
+                    g.draw(new Line2D.Double(cx + Math.cos(a) * 7, cy + Math.sin(a) * 7, cx + Math.cos(a) * 9.5, cy + Math.sin(a) * 9.5));
+                }
+            }
+            g.dispose();
         }
     }
 
@@ -969,13 +1585,292 @@ public class VirtualOS extends JPanel {
         }
     }
 
+    // ----------------------------------------------------------- personalize
+    private static final class Chips<T> extends JPanel {
+        private final List<T> items = new ArrayList<>();
+        private final List<String> names = new ArrayList<>();
+        private final Consumer<T> onPick;
+        private T selected;
+
+        @SafeVarargs
+        Chips(T selected, Function<T, String> label, Consumer<T> onPick, T... options) {
+            super(new FlowLayout(FlowLayout.LEFT, 5, 2));
+            setOpaque(false);
+            this.selected = selected;
+            this.onPick = onPick;
+            for (T o : options) {
+                items.add(o);
+                names.add(label.apply(o));
+                add(new Chip(o, label.apply(o)));
+            }
+        }
+
+        void set(T t) { selected = t; repaint(); }
+
+        private final class Chip extends JComponent {
+            private final T value;
+            private final String text;
+            private boolean hover;
+
+            Chip(T value, String text) {
+                this.value = value;
+                this.text = text;
+                setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+                setFont(Theme.BOLD);
+                addMouseListener(new MouseAdapter() {
+                    @Override public void mouseEntered(MouseEvent e) { hover = true; repaint(); }
+                    @Override public void mouseExited(MouseEvent e) { hover = false; repaint(); }
+                    @Override public void mouseClicked(MouseEvent e) {
+                        if (!SwingUtilities.isLeftMouseButton(e)) return;
+                        selected = value;
+                        Chips.this.repaint();
+                        onPick.accept(value);
+                    }
+                });
+            }
+
+            @Override public Dimension getPreferredSize() {
+                return new Dimension(getFontMetrics(getFont()).stringWidth(text) + 24, 26);
+            }
+
+            @Override protected void paintComponent(Graphics g0) {
+                Graphics2D g = (Graphics2D) g0.create();
+                g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                boolean on = value.equals(selected);
+                Color fill = on ? Theme.PRIMARY : hover ? Theme.mix(Theme.PRIMARY_L, Theme.PRIMARY, .16f) : Theme.PRIMARY_L;
+                g.setColor(fill);
+                g.fill(new RoundRectangle2D.Float(0, 0, getWidth(), getHeight(), 14, 14));
+                g.setFont(getFont());
+                g.setColor(on ? Color.WHITE : Theme.PRIMARY_D);
+                FontMetrics fm = g.getFontMetrics();
+                g.drawString(text, (getWidth() - fm.stringWidth(text)) / 2, (getHeight() + fm.getAscent() - fm.getDescent()) / 2);
+                g.dispose();
+            }
+        }
+    }
+
+    private final class SchemeCard extends JComponent {
+        private final Theme.Scheme scheme;
+        private boolean hover;
+
+        SchemeCard(Theme.Scheme scheme) {
+            this.scheme = scheme;
+            setPreferredSize(new Dimension(150, 84));
+            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            setToolTipText(scheme.name);
+            addMouseListener(new MouseAdapter() {
+                @Override public void mouseEntered(MouseEvent e) { hover = true; repaint(); }
+                @Override public void mouseExited(MouseEvent e) { hover = false; repaint(); }
+                @Override public void mouseClicked(MouseEvent e) { if (SwingUtilities.isLeftMouseButton(e)) setScheme(scheme); }
+            });
+        }
+
+        @Override protected void paintComponent(Graphics g0) {
+            Graphics2D g = (Graphics2D) g0.create();
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            Color[] c = Theme.swatch(scheme, Theme.mode());
+            int w = getWidth(), h = getHeight();
+            boolean on = scheme == Theme.scheme();
+            RoundRectangle2D.Float shape = new RoundRectangle2D.Float(1, 1, w - 3, h - 3, 14, 14);
+            g.setColor(Theme.CARD);
+            g.fill(shape);
+            Shape oldClip = g.getClip();
+            g.clip(new RoundRectangle2D.Float(5, 5, w - 11, h - 30, 9, 9));
+            g.setPaint(new GradientPaint(5, 5, c[3], w - 6, h - 25, c[4]));
+            g.fillRect(5, 5, w - 10, h - 28);
+            g.setColor(c[1]);
+            g.fill(new RoundRectangle2D.Float(w * 0.30f, 14, w * 0.52f, h - 50, 6, 6));
+            g.setColor(c[6]);
+            g.fill(new RoundRectangle2D.Float(w * 0.30f, 14, w * 0.52f, 9, 6, 6));
+            g.setColor(c[2]);
+            g.fill(new RoundRectangle2D.Float(w * 0.36f, h - 46, w * 0.22f, 8, 5, 5));
+            g.setColor(c[5]);
+            g.fillRect((int) (w * 0.36f), 30, (int) (w * 0.34f), 2);
+            g.fillRect((int) (w * 0.36f), 36, (int) (w * 0.24f), 2);
+            for (int k = 0; k < 3; k++) {
+                g.setColor(k == 0 ? c[2] : new Color(255, 255, 255, 190));
+                g.fill(new RoundRectangle2D.Float(11, 11 + k * 14, 10, 10, 4, 4));
+            }
+            g.setClip(oldClip);
+            g.setFont(Theme.BOLD);
+            g.setColor(Theme.TEXT);
+            g.drawString(scheme.name, 10, h - 9);
+            g.setColor(c[2]);
+            g.fill(new Ellipse2D.Float(w - 20, h - 20, 10, 10));
+            g.setStroke(new BasicStroke(on ? 2.4f : 1f));
+            g.setColor(on ? Theme.PRIMARY : hover ? Theme.PRIMARY_D : Theme.BORDER);
+            g.draw(shape);
+            g.dispose();
+        }
+    }
+
+    private final class IconPreview extends JComponent {
+        @Override public Dimension getPreferredSize() { return new Dimension(380, IconStyle.size + 22); }
+
+        @Override protected void paintComponent(Graphics g0) {
+            Graphics2D g = (Graphics2D) g0.create();
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setPaint(new GradientPaint(0, 0, Theme.DESK_A, getWidth(), getHeight(), Theme.DESK_B));
+            g.fill(new RoundRectangle2D.Float(0, 0, getWidth() - 1, getHeight() - 1, 14, 14));
+            int sz = IconStyle.size, gap = sz + 18, x = 14;
+            for (int i = 0; i < APPS.size() && x + sz < getWidth() - 6; i++, x += gap)
+                paintGlyph(g, APPS.get(i), x, 11, sz);
+            g.dispose();
+        }
+    }
+
+    private final class PersonalizePanel extends JPanel {
+        private Chips<Theme.Mode> modeChips;
+        private Chips<Integer> sizeChips;
+        private Chips<IconShape> shapeChips;
+        private Chips<Boolean> fillChips, labelChips, arrangeChips;
+        private Chips<IconColors> colorChips;
+        private final IconPreview preview = new IconPreview();
+        private final List<SchemeCard> cards = new ArrayList<>();
+
+        PersonalizePanel() {
+            setLayout(new BorderLayout());
+            JPanel body = new JPanel();
+            body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+            body.setBorder(new EmptyBorder(8, 10, 10, 10));
+            body.add(appearanceCard());
+            body.add(Box.createVerticalStrut(8));
+            body.add(iconsCard());
+            body.add(Box.createVerticalStrut(8));
+            body.add(wallpaperCard());
+            JScrollPane sp = new JScrollPane(body);
+            sp.setBorder(null);
+            sp.getVerticalScrollBar().setUnitIncrement(16);
+            add(sp, BorderLayout.CENTER);
+            personalizeSync = this::sync;
+        }
+
+        private void sync() {
+            modeChips.set(Theme.mode());
+            sizeChips.set(IconStyle.size);
+            shapeChips.set(IconStyle.shape);
+            fillChips.set(IconStyle.gradient);
+            labelChips.set(IconStyle.labels);
+            arrangeChips.set(autoArrange);
+            colorChips.set(IconStyle.colors);
+            for (SchemeCard c : cards) c.repaint();
+            preview.revalidate();
+            preview.repaint();
+        }
+
+        private JPanel section(String title) {
+            JPanel p = new JPanel(new GridBagLayout());
+            p.setOpaque(false);
+            p.setBorder(Common.titled(title));
+            p.setAlignmentX(Component.LEFT_ALIGNMENT);
+            return p;
+        }
+
+        private void addRow(JPanel p, int row, String label, JComponent c) {
+            GridBagConstraints gc = new GridBagConstraints();
+            gc.gridy = row; gc.insets = new Insets(4, 6, 4, 6); gc.anchor = GridBagConstraints.WEST;
+            gc.gridx = 0; gc.weightx = 0; gc.fill = GridBagConstraints.NONE;
+            JLabel l = Common.label(label);
+            gc.anchor = GridBagConstraints.NORTHWEST;
+            gc.insets = new Insets(8, 6, 4, 10);
+            p.add(l, gc);
+            gc.gridx = 1; gc.weightx = 1; gc.fill = GridBagConstraints.HORIZONTAL;
+            gc.insets = new Insets(4, 0, 4, 6);
+            p.add(c, gc);
+        }
+
+        private JPanel appearanceCard() {
+            JPanel p = section("Appearance");
+            modeChips = new Chips<>(Theme.mode(), m -> m == Theme.Mode.DARK ? "Dark" : "Light",
+                    m -> setMode(m), Theme.Mode.DARK, Theme.Mode.LIGHT);
+            addRow(p, 0, "Mode", modeChips);
+            JPanel grid = new JPanel(new GridLayout(0, 3, 8, 8));
+            grid.setOpaque(false);
+            for (Theme.Scheme sc : Theme.SCHEMES) {
+                SchemeCard c = new SchemeCard(sc);
+                cards.add(c);
+                grid.add(c);
+            }
+            addRow(p, 1, "Theme", grid);
+            return p;
+        }
+
+        private JPanel iconsCard() {
+            JPanel p = section("Icons");
+            int r = 0;
+            sizeChips = new Chips<>(IconStyle.size,
+                    v -> v == IconStyle.SMALL ? "Small" : v == IconStyle.MEDIUM ? "Medium" : "Large",
+                    v -> { IconStyle.size = v; iconStyleChanged(); }, IconStyle.SMALL, IconStyle.MEDIUM, IconStyle.LARGE);
+            addRow(p, r++, "Size", sizeChips);
+            shapeChips = new Chips<>(IconStyle.shape, v -> v.label,
+                    v -> { IconStyle.shape = v; iconStyleChanged(); }, IconShape.values());
+            addRow(p, r++, "Shape", shapeChips);
+            fillChips = new Chips<>(IconStyle.gradient, v -> v ? "Gradient" : "Flat",
+                    v -> { IconStyle.gradient = v; iconStyleChanged(); }, true, false);
+            addRow(p, r++, "Fill", fillChips);
+            colorChips = new Chips<>(IconStyle.colors, v -> v.label,
+                    v -> { IconStyle.colors = v; iconStyleChanged(); }, IconColors.values());
+            addRow(p, r++, "Colors", colorChips);
+            labelChips = new Chips<>(IconStyle.labels, v -> v ? "Show names" : "Hide names",
+                    v -> { IconStyle.labels = v; iconStyleChanged(); }, true, false);
+            addRow(p, r++, "Names", labelChips);
+            addRow(p, r++, "Preview", preview);
+
+            JComboBox<String> which = Common.combo(titles());
+            JPanel pick = Common.row();
+            pick.add(which);
+            pick.add(Common.softButton("Pick color...", () -> {
+                String t = (String) which.getSelectedItem();
+                App a = appByTitle(t);
+                if (a == null) return;
+                Color c = JColorChooser.showDialog(this, "Icon color - " + t, colorOf(a));
+                if (c != null) { IconStyle.custom.put(t, c.getRGB() & 0xFFFFFF); iconStyleChanged(); }
+            }));
+            pick.add(Common.softButton("Reset all colors", () -> { IconStyle.custom.clear(); iconStyleChanged(); }));
+            addRow(p, r++, "Single icon", pick);
+
+            arrangeChips = new Chips<>(autoArrange, v -> v ? "Automatic" : "Free (drag anywhere)",
+                    v -> setAutoArrange(v), true, false);
+            addRow(p, r++, "Arrange", arrangeChips);
+            JPanel sort = Common.row();
+            sort.add(Common.softButton("Name A-Z", () -> sortByName(true)));
+            sort.add(Common.softButton("Name Z-A", () -> sortByName(false)));
+            sort.add(Common.softButton("Color", VirtualOS.this::sortByColor));
+            sort.add(Common.softButton("Default order", VirtualOS.this::sortDefault));
+            addRow(p, r++, "Sort by", sort);
+            return p;
+        }
+
+        private JPanel wallpaperCard() {
+            JPanel p = section("Wallpaper");
+            JPanel row = Common.row();
+            row.add(Common.softButton("Choose image...", VirtualOS.this::chooseWallpaper));
+            row.add(Common.softButton("Use theme background", VirtualOS.this::resetWallpaper));
+            addRow(p, 0, "Background", row);
+            return p;
+        }
+    }
+
+    private static String[] titles() {
+        String[] t = new String[APPS.size()];
+        for (int i = 0; i < t.length; i++) t[i] = APPS.get(i).title;
+        return t;
+    }
+
+    private static App appByTitle(String t) {
+        for (App a : APPS) if (a.title.equals(t)) return a;
+        return null;
+    }
+
     // --------------------------------------------------------------- battery
     private void startBatteryPoller() {
         Thread t = new Thread(() -> {
             while (true) {
                 final int p = readBattery();
                 SwingUtilities.invokeLater(() -> battery.set(p));
-                if (p < 0) return; // no battery (or unreadable): stop polling
+                if (p < 0) return;
                 try { Thread.sleep(60000); } catch (InterruptedException e) { return; }
             }
         }, "battery-poller");
@@ -1009,3 +1904,4 @@ public class VirtualOS extends JPanel {
         return out;
     }
 }
+// ```[cite: 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
