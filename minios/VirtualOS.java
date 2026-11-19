@@ -38,7 +38,7 @@ import javax.swing.filechooser.FileNameExtensionFilter;
 /**
  * VirtualOS - a small desktop shell that hosts the Mini OS Simulator modules.
  * Desktop icons (double-click) open each module in its own window; the taskbar has a Start menu,
- * program search, window buttons, open process counter, show-desktop button, and clickable clock/calendar.
+ * program search, window buttons, show-desktop edge strip, and clickable clock/calendar.
  * Right-click the desktop to change the wallpaper or personalize the shell.
  */
 public class VirtualOS extends JPanel {
@@ -96,9 +96,8 @@ public class VirtualOS extends JPanel {
         File mainClassFile = new File(gameBinDir, "main/MainClass.class");
         File stagedMainClass = new File("cache/battle-z/bin/main/MainClass.class");
 
-        if (mainClassFile.exists() || stagedMainClass.exists()) {
-            apps.add(new App(GAME_NAME, new Color(0x8b0000), 0, VirtualOS::createGameApp));
-        }
+        if (mainClassFile.exists() || stagedMainClass.exists()) 
+            apps.add(new App(GAME_NAME, new Color(0x8b0000), 9, VirtualOS::createGameApp));
 
         return apps;
     }
@@ -130,11 +129,22 @@ public class VirtualOS extends JPanel {
             if (parent != null && !parent.exists() && !parent.mkdirs()) {
                 throw new IOException("Failed to create parent directory: " + parent);
             }
-            java.nio.file.Files.copy(
-                    source.toPath(),
-                    target.toPath(),
-                    java.nio.file.StandardCopyOption.REPLACE_EXISTING
-            );
+            // Skip copying if the staged file is already up to date
+            if (target.exists()
+                    && source.length() == target.length()
+                    && source.lastModified() <= target.lastModified()) {
+                return;
+            }
+            try {
+                java.nio.file.Files.copy(
+                        source.toPath(),
+                        target.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                );
+            } catch (java.nio.file.FileSystemException ex) {
+                // If Windows still holds a lock on an already-staged JAR/DLL, reuse it
+                if (!target.exists()) throw ex;
+            }
         }
     }
 
@@ -179,6 +189,65 @@ public class VirtualOS extends JPanel {
             java.lang.reflect.Method getPanelMethod = gameClass.getMethod("getGamePanel");
             JPanel gamePanel = (JPanel) getPanelMethod.invoke(gameInstance);
 
+            java.util.concurrent.atomic.AtomicBoolean killed = new java.util.concurrent.atomic.AtomicBoolean(false);
+            Runnable killProcess = () -> {
+                if (!killed.compareAndSet(false, true)) return;
+
+                // Stop any game loop method or background thread inside main.Game
+                for (String methodName : new String[]{"stop", "stopGame", "close", "dispose"}) {
+                    try {
+                        java.lang.reflect.Method m = gameClass.getMethod(methodName);
+                        m.invoke(gameInstance);
+                        break;
+                    } catch (Exception ignored) { }
+                }
+                for (java.lang.reflect.Field field : gameClass.getDeclaredFields()) {
+                    try {
+                        field.setAccessible(true);
+                        Object val = field.get(gameInstance);
+                        if (val instanceof Thread) {
+                            ((Thread) val).interrupt();
+                        } else if (field.getType() == boolean.class && field.getName().toLowerCase().contains("run")) {
+                            field.setBoolean(gameInstance, false);
+                        }
+                    } catch (Exception ignored) { }
+                }
+
+                try {
+                    classLoader.close();
+                } catch (IOException ignored) { }
+
+                // Dispose the hosting JInternalFrame so VirtualOS cleans up the process & taskbar
+                JInternalFrame frame = (JInternalFrame) SwingUtilities.getAncestorOfClass(JInternalFrame.class, container);
+                if (frame != null) {
+                    try {
+                        frame.setClosed(true);
+                    } catch (PropertyVetoException e) {
+                        frame.dispose();
+                    }
+                }
+            };
+
+            // Listen directly on gamePanel while it has active game focus
+            gamePanel.addKeyListener(new KeyAdapter() {
+                @Override
+                public void keyPressed(KeyEvent e) {
+                    if (e.getKeyCode() == KeyEvent.VK_BACK_SPACE) {
+                        killProcess.run();
+                    }
+                }
+            });
+
+            // Fallback window-level key binding if container or a child has focus
+            container.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
+                    .put(KeyStroke.getKeyStroke(KeyEvent.VK_BACK_SPACE, 0), "killGameProcess");
+            container.getActionMap().put("killGameProcess", new AbstractAction() {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    killProcess.run();
+                }
+            });
+
             container.add(gamePanel, BorderLayout.CENTER);
 
             container.addAncestorListener(new javax.swing.event.AncestorListener() {
@@ -186,7 +255,9 @@ public class VirtualOS extends JPanel {
                     gamePanel.requestFocusInWindow();
                 }
                 @Override public void ancestorMoved(javax.swing.event.AncestorEvent event) {}
-                @Override public void ancestorRemoved(javax.swing.event.AncestorEvent event) {}
+                @Override public void ancestorRemoved(javax.swing.event.AncestorEvent event) {
+                    killProcess.run();
+                }
             });
 
             container.setFocusable(true);
@@ -220,7 +291,7 @@ public class VirtualOS extends JPanel {
 
     /** How icons look everywhere (desktop, windows, taskbar, menus). Saved between runs. */
     static final class IconStyle {
-        static final int SMALL = 32, MEDIUM = 44, LARGE = 60;
+        static final int SMALL = 28, MEDIUM = 36, LARGE = 48;
         static int size = MEDIUM;
         static IconShape shape = IconShape.ROUNDED;
         static boolean gradient = true;
@@ -272,7 +343,7 @@ public class VirtualOS extends JPanel {
         }
     }
 
-    /** Draws an app icon (background shape + white glyph) into the square at x,y with side s. */
+    /** Draws a clean, compact app icon (squircle + crisp rim + geometric glyph). */
     static void paintGlyph(Graphics2D g0, App a, float x, float y, float s) {
         Graphics2D g = (Graphics2D) g0.create();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
@@ -281,107 +352,167 @@ public class VirtualOS extends JPanel {
         Shape bg;
         switch (IconStyle.shape) {
             case CIRCLE: bg = new Ellipse2D.Float(x, y, s, s); break;
-            case SQUARE: bg = new RoundRectangle2D.Float(x, y, s, s, s * 0.08f, s * 0.08f); break;
-            default:     bg = new RoundRectangle2D.Float(x, y, s, s, s * 0.26f, s * 0.26f);
+            case SQUARE: bg = new RoundRectangle2D.Float(x, y, s, s, s * 0.12f, s * 0.12f); break;
+            default:     bg = new RoundRectangle2D.Float(x, y, s, s, s * 0.28f, s * 0.28f);
         }
-        g.setPaint(IconStyle.gradient ? new GradientPaint(x, y, lighten(col, 0.22f), x, y + s, col) : col);
+        g.setPaint(IconStyle.gradient ? new GradientPaint(x, y, lighten(col, 0.20f), x, y + s, col) : col);
         g.fill(bg);
+
+        if (s >= 20f) {
+            g.setColor(new Color(255, 255, 255, 55));
+            g.setStroke(new BasicStroke(1f));
+            g.draw(bg);
+        }
+
         float u = s / 10f;
         g.setColor(Color.WHITE);
         switch (a.glyph) {
-            case 0: { // CPU chip
-                for (int k = 0; k < 3; k++) {
-                    float p = 3.5f + k * 1.3f;
-                    g.fill(new Rectangle2D.Float(x + p * u, y + 1.7f * u, 0.6f * u, 1.3f * u));
-                    g.fill(new Rectangle2D.Float(x + p * u, y + 7f * u, 0.6f * u, 1.3f * u));
-                    g.fill(new Rectangle2D.Float(x + 1.7f * u, y + p * u, 1.3f * u, 0.6f * u));
-                    g.fill(new Rectangle2D.Float(x + 7f * u, y + p * u, 1.3f * u, 0.6f * u));
+            case 0: { // Clean CPU microchip
+                for (int k = 0; k < 2; k++) {
+                    float p = 3.55f + k * 2.25f;
+                    g.fill(new RoundRectangle2D.Float(x + p * u, y + 1.9f * u, 0.65f * u, 1.1f * u, 0.3f * u, 0.3f * u));
+                    g.fill(new RoundRectangle2D.Float(x + p * u, y + 7.0f * u, 0.65f * u, 1.1f * u, 0.3f * u, 0.3f * u));
+                    g.fill(new RoundRectangle2D.Float(x + 1.9f * u, y + p * u, 1.1f * u, 0.65f * u, 0.3f * u, 0.3f * u));
+                    g.fill(new RoundRectangle2D.Float(x + 7.0f * u, y + p * u, 1.1f * u, 0.65f * u, 0.3f * u, 0.3f * u));
                 }
-                g.fill(new RoundRectangle2D.Float(x + 2.8f * u, y + 2.8f * u, 4.4f * u, 4.4f * u, u, u));
+                g.fill(new RoundRectangle2D.Float(x + 2.9f * u, y + 2.9f * u, 4.2f * u, 4.2f * u, 0.9f * u, 0.9f * u));
                 g.setColor(col);
-                g.fill(new Rectangle2D.Float(x + 4f * u, y + 4f * u, 2f * u, 2f * u));
+                g.fill(new RoundRectangle2D.Float(x + 4.1f * u, y + 4.1f * u, 1.8f * u, 1.8f * u, 0.4f * u, 0.4f * u));
                 break;
             }
-            case 1: { // shield with check
+            case 1: { // Clean shield with checkmark
                 Path2D.Float p = new Path2D.Float();
-                p.moveTo(x + 5f * u, y + 1.6f * u);
-                p.lineTo(x + 8.2f * u, y + 2.8f * u);
-                p.lineTo(x + 8.2f * u, y + 5.4f * u);
-                p.curveTo(x + 8.2f * u, y + 7.2f * u, x + 6.6f * u, y + 8.3f * u, x + 5f * u, y + 8.9f * u);
-                p.curveTo(x + 3.4f * u, y + 8.3f * u, x + 1.8f * u, y + 7.2f * u, x + 1.8f * u, y + 5.4f * u);
-                p.lineTo(x + 1.8f * u, y + 2.8f * u);
+                p.moveTo(x + 5f * u, y + 2.0f * u);
+                p.lineTo(x + 7.7f * u, y + 3.0f * u);
+                p.lineTo(x + 7.7f * u, y + 5.2f * u);
+                p.curveTo(x + 7.7f * u, y + 6.8f * u, x + 6.4f * u, y + 7.8f * u, x + 5f * u, y + 8.3f * u);
+                p.curveTo(x + 3.6f * u, y + 7.8f * u, x + 2.3f * u, y + 6.8f * u, x + 2.3f * u, y + 5.2f * u);
+                p.lineTo(x + 2.3f * u, y + 3.0f * u);
                 p.closePath();
                 g.fill(p);
                 g.setColor(col);
-                g.setStroke(new BasicStroke(0.9f * u, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                g.setStroke(new BasicStroke(0.85f * u, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
                 Path2D.Float chk = new Path2D.Float();
-                chk.moveTo(x + 3.6f * u, y + 5.1f * u);
-                chk.lineTo(x + 4.7f * u, y + 6.2f * u);
-                chk.lineTo(x + 6.5f * u, y + 4f * u);
+                chk.moveTo(x + 3.7f * u, y + 5.0f * u);
+                chk.lineTo(x + 4.7f * u, y + 6.0f * u);
+                chk.lineTo(x + 6.4f * u, y + 4.1f * u);
                 g.draw(chk);
                 break;
             }
-            case 2: { // house
+            case 2: { // Compact home / page frame
                 Path2D.Float p = new Path2D.Float();
-                p.moveTo(x + 5f * u, y + 1.6f * u);
-                p.lineTo(x + 8.8f * u, y + 5f * u);
-                p.lineTo(x + 7.7f * u, y + 5f * u);
-                p.lineTo(x + 7.7f * u, y + 8.2f * u);
-                p.lineTo(x + 2.3f * u, y + 8.2f * u);
-                p.lineTo(x + 2.3f * u, y + 5f * u);
-                p.lineTo(x + 1.2f * u, y + 5f * u);
+                p.moveTo(x + 5f * u, y + 2.0f * u);
+                p.lineTo(x + 8.1f * u, y + 4.8f * u);
+                p.lineTo(x + 7.2f * u, y + 4.8f * u);
+                p.lineTo(x + 7.2f * u, y + 7.8f * u);
+                p.lineTo(x + 2.8f * u, y + 7.8f * u);
+                p.lineTo(x + 2.8f * u, y + 4.8f * u);
+                p.lineTo(x + 1.9f * u, y + 4.8f * u);
                 p.closePath();
                 g.fill(p);
                 g.setColor(col);
-                g.fill(new Rectangle2D.Float(x + 4.2f * u, y + 5.7f * u, 1.6f * u, 2.5f * u));
+                g.fill(new RoundRectangle2D.Float(x + 4.3f * u, y + 5.6f * u, 1.4f * u, 2.2f * u, 0.3f * u, 0.3f * u));
                 break;
             }
-            case 3: { // "C" ring
-                g.setStroke(new BasicStroke(1.4f * u, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-                g.draw(new Arc2D.Float(x + 2.4f * u, y + 2.4f * u, 5.2f * u, 5.2f * u, 50, 260, Arc2D.OPEN));
+            case 3: { // Clean cycle ring with arrow
+                g.setStroke(new BasicStroke(1.15f * u, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                g.draw(new Arc2D.Float(x + 2.6f * u, y + 2.6f * u, 4.8f * u, 4.8f * u, 45, 275, Arc2D.OPEN));
+                Path2D.Float arrow = new Path2D.Float();
+                arrow.moveTo(x + 6.5f * u, y + 2.1f * u);
+                arrow.lineTo(x + 7.5f * u, y + 3.5f * u);
+                arrow.lineTo(x + 5.8f * u, y + 3.6f * u);
+                arrow.closePath();
+                g.fill(arrow);
                 break;
             }
-            case 4: { // stacked segments
-                g.fill(new RoundRectangle2D.Float(x + 2.2f * u, y + 2.2f * u, 5.6f * u, 2.4f * u, u, u));
-                g.fill(new RoundRectangle2D.Float(x + 2.2f * u, y + 5.4f * u, 5.6f * u, 2.4f * u, u, u));
+            case 4: { // Stacked memory segments
+                g.fill(new RoundRectangle2D.Float(x + 2.4f * u, y + 2.5f * u, 5.2f * u, 2.1f * u, 0.8f * u, 0.8f * u));
+                g.fill(new RoundRectangle2D.Float(x + 2.4f * u, y + 5.4f * u, 5.2f * u, 2.1f * u, 0.8f * u, 0.8f * u));
                 g.setColor(col);
-                g.fill(new Ellipse2D.Float(x + 3f * u, y + 3f * u, 1f * u, 1f * u));
-                g.fill(new Ellipse2D.Float(x + 3f * u, y + 6.2f * u, 1f * u, 1f * u));
+                g.fill(new Ellipse2D.Float(x + 3.1f * u, y + 3.15f * u, 0.8f * u, 0.8f * u));
+                g.fill(new Ellipse2D.Float(x + 3.1f * u, y + 6.05f * u, 0.8f * u, 0.8f * u));
                 break;
             }
-            case 5: { // 2x2 grid
-                g.fill(new RoundRectangle2D.Float(x + 2.1f * u, y + 2.1f * u, 2.8f * u, 2.8f * u, 0.6f * u, 0.6f * u));
-                g.fill(new RoundRectangle2D.Float(x + 5.1f * u, y + 2.1f * u, 2.8f * u, 2.8f * u, 0.6f * u, 0.6f * u));
-                g.fill(new RoundRectangle2D.Float(x + 2.1f * u, y + 5.1f * u, 2.8f * u, 2.8f * u, 0.6f * u, 0.6f * u));
-                g.setColor(new Color(255, 255, 255, 140));
-                g.fill(new RoundRectangle2D.Float(x + 5.1f * u, y + 5.1f * u, 2.8f * u, 2.8f * u, 0.6f * u, 0.6f * u));
+            case 5: { // Compact 2x2 partition grid
+                g.fill(new RoundRectangle2D.Float(x + 2.4f * u, y + 2.4f * u, 2.3f * u, 2.3f * u, 0.55f * u, 0.55f * u));
+                g.fill(new RoundRectangle2D.Float(x + 5.3f * u, y + 2.4f * u, 2.3f * u, 2.3f * u, 0.55f * u, 0.55f * u));
+                g.fill(new RoundRectangle2D.Float(x + 2.4f * u, y + 5.3f * u, 2.3f * u, 2.3f * u, 0.55f * u, 0.55f * u));
+                g.setColor(new Color(255, 255, 255, 130));
+                g.fill(new RoundRectangle2D.Float(x + 5.3f * u, y + 5.3f * u, 2.3f * u, 2.3f * u, 0.55f * u, 0.55f * u));
                 break;
             }
-            case 6: { // disk / radar
-                g.setStroke(new BasicStroke(0.7f * u, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-                g.draw(new Ellipse2D.Float(x + 1.9f * u, y + 1.9f * u, 6.2f * u, 6.2f * u));
-                g.draw(new Ellipse2D.Float(x + 3.5f * u, y + 3.5f * u, 3f * u, 3f * u));
-                g.fill(new Ellipse2D.Float(x + 4.5f * u, y + 4.5f * u, 1f * u, 1f * u));
-                g.setStroke(new BasicStroke(0.8f * u, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-                g.draw(new Line2D.Float(x + 5f * u, y + 5f * u, x + 7.4f * u, y + 2.6f * u));
+            case 6: { // Minimalist disk platter
+                g.setStroke(new BasicStroke(0.75f * u, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                g.draw(new Ellipse2D.Float(x + 2.2f * u, y + 2.2f * u, 5.6f * u, 5.6f * u));
+                g.draw(new Ellipse2D.Float(x + 3.8f * u, y + 3.8f * u, 2.4f * u, 2.4f * u));
+                g.fill(new Ellipse2D.Float(x + 4.55f * u, y + 4.55f * u, 0.9f * u, 0.9f * u));
+                g.draw(new Line2D.Float(x + 5.0f * u, y + 5.0f * u, x + 7.2f * u, y + 2.8f * u));
                 break;
             }
-            case 8: { // sliders / OS emblem
-                g.setStroke(new BasicStroke(0.8f * u, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-                float[] ys = {3f, 5f, 7f}, kx = {6.6f, 3.4f, 5.6f};
-                for (float yy : ys) g.draw(new Line2D.Float(x + 2f * u, y + yy * u, x + 8f * u, y + yy * u));
+            case 8: { // Minimalist OS control sliders
+                g.setStroke(new BasicStroke(0.75f * u, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                float[] ys = {3.1f, 5.0f, 6.9f}, kx = {6.4f, 3.6f, 5.5f};
+                for (float yy : ys) g.draw(new Line2D.Float(x + 2.3f * u, y + yy * u, x + 7.7f * u, y + yy * u));
                 for (int k = 0; k < 3; k++) {
                     g.setColor(Color.WHITE);
-                    g.fill(new Ellipse2D.Float(x + (kx[k] - 1f) * u, y + (ys[k] - 1f) * u, 2f * u, 2f * u));
+                    g.fill(new Ellipse2D.Float(x + (kx[k] - 0.85f) * u, y + (ys[k] - 0.85f) * u, 1.7f * u, 1.7f * u));
                     g.setColor(col);
-                    g.fill(new Ellipse2D.Float(x + (kx[k] - 0.45f) * u, y + (ys[k] - 0.45f) * u, 0.9f * u, 0.9f * u));
+                    g.fill(new Ellipse2D.Float(x + (kx[k] - 0.35f) * u, y + (ys[k] - 0.35f) * u, 0.7f * u, 0.7f * u));
                 }
                 break;
             }
-            default: { // bar chart
-                g.fill(new RoundRectangle2D.Float(x + 2.2f * u, y + 5.4f * u, 1.7f * u, 2.8f * u, 0.5f * u, 0.5f * u));
-                g.fill(new RoundRectangle2D.Float(x + 4.2f * u, y + 3.4f * u, 1.7f * u, 4.8f * u, 0.5f * u, 0.5f * u));
-                g.fill(new RoundRectangle2D.Float(x + 6.2f * u, y + 1.9f * u, 1.7f * u, 6.3f * u, 0.5f * u, 0.5f * u));
+            case 9: { // Big Z with "Battle" cutting through the middle
+                g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                g.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
+
+                // Bold geometric Z path
+                Path2D.Float zPath = new Path2D.Float();
+                zPath.moveTo(x + 2.2f * u, y + 1.9f * u);
+                zPath.lineTo(x + 7.8f * u, y + 1.9f * u);
+                zPath.lineTo(x + 7.8f * u, y + 3.15f * u);
+                zPath.lineTo(x + 3.75f * u, y + 6.85f * u);
+                zPath.lineTo(x + 7.8f * u, y + 6.85f * u);
+                zPath.lineTo(x + 7.8f * u, y + 8.1f * u);
+                zPath.lineTo(x + 2.2f * u, y + 8.1f * u);
+                zPath.lineTo(x + 2.2f * u, y + 6.85f * u);
+                zPath.lineTo(x + 6.25f * u, y + 3.15f * u);
+                zPath.lineTo(x + 2.2f * u, y + 3.15f * u);
+                zPath.closePath();
+
+                // Cut a clean horizontal channel through the center of the Z
+                Area zArea = new Area(zPath);
+                float bandH = 2.05f * u;
+                zArea.subtract(new Area(new Rectangle2D.Float(
+                        x + 1.0f * u, y + 5.0f * u - bandH / 2f, 8.0f * u, bandH)));
+                g.fill(zArea);
+
+                // Draw "Battle" inside the horizontal cutout
+                String word = "Battle";
+                float maxTextW = 7.8f * u;
+                float fontSize = 2.3f * u;
+                Font font = new Font(Font.SANS_SERIF, Font.BOLD, 10).deriveFont(fontSize);
+                g.setFont(font);
+                FontMetrics fm = g.getFontMetrics();
+                if (fm.stringWidth(word) > maxTextW) {
+                    fontSize *= maxTextW / fm.stringWidth(word);
+                    font = font.deriveFont(fontSize);
+                    g.setFont(font);
+                    fm = g.getFontMetrics();
+                }
+
+                float tx = x + (s - fm.stringWidth(word)) / 2f;
+                float ty = y + (s + fm.getAscent() - fm.getDescent()) / 2f;
+                g.setColor(new Color(0, 0, 0, 120));
+                g.drawString(word, tx, ty + 0.18f * u);
+                g.setColor(Color.WHITE);
+                g.drawString(word, tx, ty);
+                break;
+            }
+
+            default: { // Compact ascending bars
+                g.fill(new RoundRectangle2D.Float(x + 2.4f * u, y + 5.3f * u, 1.35f * u, 2.4f * u, 0.45f * u, 0.45f * u));
+                g.fill(new RoundRectangle2D.Float(x + 4.32f * u, y + 3.7f * u, 1.35f * u, 4.0f * u, 0.45f * u, 0.45f * u));
+                g.fill(new RoundRectangle2D.Float(x + 6.25f * u, y + 2.3f * u, 1.35f * u, 5.4f * u, 0.45f * u, 0.45f * u));
             }
         }
         g.dispose();
@@ -409,7 +540,6 @@ public class VirtualOS extends JPanel {
     private final Map<JInternalFrame, JToggleButton> buttons = new HashMap<>();
     private final List<JInternalFrame> hiddenByShowDesktop = new ArrayList<>();
     private final JPanel windowStrip = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 7));
-    private final JLabel openCountLabel = new JLabel();
     private final BatteryLabel battery = new BatteryLabel();
     private final ClockLabel clock = new ClockLabel();
     private final SearchField search = new SearchField();
@@ -473,9 +603,11 @@ public class VirtualOS extends JPanel {
 
     private void updateOpenCount() {
         int count = openProcessCount();
-        openCountLabel.setText("Open: " + count);
-        openCountLabel.setToolTipText(count + (count == 1 ? " open process" : " open processes"));
-        openCountLabel.repaint();
+        List<String> names = openProcessNames();
+        system.setToolTipText(names.isEmpty()
+                ? "Open Processes: 0"
+                : "Open Processes (" + count + "): " + String.join(", ", names));
+        system.repaint();
     }
 
     private void toggleShowDesktop() {
@@ -554,10 +686,10 @@ public class VirtualOS extends JPanel {
     }
 
     // ---------------------------------------------------------------- layout
-    private static final int MARGIN_X = 10, MARGIN_Y = 8;
+    private static final int MARGIN_X = 8, MARGIN_Y = 8;
 
-    private int cellW() { return Math.max(84, IconStyle.size + 52); }
-    private int cellH() { return IconStyle.labels ? IconStyle.size + 40 : IconStyle.size + 18; }
+    private int cellW() { return Math.max(74, IconStyle.size + 38); }
+    private int cellH() { return IconStyle.labels ? IconStyle.size + 32 : IconStyle.size + 12; }
     private int maxRows() { return Math.max(1, (desktop.getHeight() - MARGIN_Y) / cellH()); }
     private int maxCols() { return Math.max(1, (desktop.getWidth() - MARGIN_X) / cellW()); }
 
@@ -729,72 +861,113 @@ public class VirtualOS extends JPanel {
         personalizeSync.run();
     }
 
+    private final java.util.Set<App> launchingApps = new java.util.HashSet<>();
+
+    private void setLoadingCursor(boolean loading) {
+        Cursor cursor = Cursor.getPredefinedCursor(loading ? Cursor.WAIT_CURSOR : Cursor.DEFAULT_CURSOR);
+        setCursor(cursor);
+        desktop.setCursor(cursor);
+
+        JRootPane root = SwingUtilities.getRootPane(this);
+        if (root != null) {
+            Component glass = root.getGlassPane();
+            glass.setCursor(cursor);
+            glass.setVisible(loading);
+        }
+    }
+
     // --------------------------------------------------------------- windows
     void open(App a) {
         JInternalFrame existing = windows.get(a);
-        if (existing != null && !existing.isClosed()) { restore(existing); return; }
-
-        JPanel content;
-        if (OS_NAME.equals(a.title)) {
-            content = buildJureveVantagePanel();
-        } else {
-            content = a.factory.get();
-            if (content == null) return;
+        if (existing != null && !existing.isClosed()) {
+            restore(existing);
+            return;
+        }
+        if (launchingApps.contains(a)) {
+            return;
         }
 
-        final JInternalFrame f = new JInternalFrame(a.title, true, true, true, true);
-        f.setFrameIcon(iconFor(a, 16));
-        f.setDefaultCloseOperation(JInternalFrame.DISPOSE_ON_CLOSE);
-        f.setContentPane(content);
+        launchingApps.add(a);
+        setLoadingCursor(true);
 
-        if (a.title.equals(GAME_NAME)) {
-            f.pack();
-            int x = (desktop.getWidth() - f.getWidth()) / 2;
-            int y = (desktop.getHeight() - f.getHeight()) / 2;
-            f.setLocation(Math.max(0, x), Math.max(0, y));
-        } else {
-            int dw = Math.max(400, desktop.getWidth()), dh = Math.max(300, desktop.getHeight());
-            boolean small = a == personalizeApp || OS_NAME.equals(a.title);
-            int w = Math.min(small ? 560 : 1000, dw - 40), h = Math.min(small ? 520 : 700, dh - 20);
-            f.setSize(w, h);
-
-            int off = (cascade++ % 6) * 28;
-            f.setLocation(Math.min(110 + off, Math.max(0, dw - w)), Math.min(16 + off, Math.max(0, dh - h)));
-        }
-
-        desktop.add(f);
-        f.setVisible(true);
-        windows.put(a, f);
-        updateOpenCount();
-
-        f.addInternalFrameListener(new InternalFrameAdapter() {
-            @Override public void internalFrameClosed(InternalFrameEvent e) {
-                if (windows.get(a) == f) windows.remove(a);
-                hiddenByShowDesktop.remove(f);
-                JToggleButton btn = buttons.remove(f);
-                if (btn != null) { windowStrip.remove(btn); windowStrip.revalidate(); windowStrip.repaint(); }
-                updateOpenCount();
+        new SwingWorker<JPanel, Void>() {
+            @Override
+            protected JPanel doInBackground() {
+                if (OS_NAME.equals(a.title)) {
+                    return buildJureveVantagePanel();
+                }
+                return a.factory != null ? a.factory.get() : null;
             }
-            @Override public void internalFrameActivated(InternalFrameEvent e) { syncButtons(); }
-            @Override public void internalFrameDeactivated(InternalFrameEvent e) { syncButtons(); }
-        });
 
-        JToggleButton b = new TaskButton(a.title, iconFor(a, 16));
-        b.setPreferredSize(new Dimension(160, 30));
-        b.addActionListener(ev -> {
-            try {
-                if (f.isIcon()) restore(f);
-                else if (f.isSelected()) f.setIcon(true);
-                else restore(f);
-            } catch (PropertyVetoException ignored) { }
-            syncButtons();
-        });
-        buttons.put(f, b);
-        windowStrip.add(b);
-        windowStrip.revalidate();
-        windowStrip.repaint();
-        try { f.setSelected(true); } catch (PropertyVetoException ignored) { }
-        syncButtons();
+            @Override
+            protected void done() {
+                try {
+                    JPanel content = get();
+                    if (content == null) return;
+
+                    final JInternalFrame f = new JInternalFrame(a.title, true, true, true, true);
+                    f.setFrameIcon(iconFor(a, 16));
+                    f.setDefaultCloseOperation(JInternalFrame.DISPOSE_ON_CLOSE);
+                    f.setContentPane(content);
+
+                    if (a.title.equals(GAME_NAME)) {
+                        f.pack();
+                        int x = (desktop.getWidth() - f.getWidth()) / 2;
+                        int y = (desktop.getHeight() - f.getHeight()) / 2;
+                        f.setLocation(Math.max(0, x), Math.max(0, y));
+                    } else {
+                        int dw = Math.max(400, desktop.getWidth()), dh = Math.max(300, desktop.getHeight());
+                        boolean small = a == personalizeApp || OS_NAME.equals(a.title);
+                        int w = Math.min(small ? 560 : 1000, dw - 40), h = Math.min(small ? 520 : 700, dh - 20);
+                        f.setSize(w, h);
+
+                        int off = (cascade++ % 6) * 28;
+                        f.setLocation(Math.min(110 + off, Math.max(0, dw - w)), Math.min(16 + off, Math.max(0, dh - h)));
+                    }
+
+                    desktop.add(f);
+                    f.setVisible(true);
+                    windows.put(a, f);
+                    updateOpenCount();
+
+                    f.addInternalFrameListener(new InternalFrameAdapter() {
+                        @Override public void internalFrameClosed(InternalFrameEvent e) {
+                            if (windows.get(a) == f) windows.remove(a);
+                            hiddenByShowDesktop.remove(f);
+                            JToggleButton btn = buttons.remove(f);
+                            if (btn != null) { windowStrip.remove(btn); windowStrip.revalidate(); windowStrip.repaint(); }
+                            updateOpenCount();
+                        }
+                        @Override public void internalFrameActivated(InternalFrameEvent e) { syncButtons(); }
+                        @Override public void internalFrameDeactivated(InternalFrameEvent e) { syncButtons(); }
+                    });
+
+                    JToggleButton b = new TaskButton(a.title, iconFor(a, 16));
+                    b.setPreferredSize(new Dimension(160, 30));
+                    b.addActionListener(ev -> {
+                        try {
+                            if (f.isIcon()) restore(f);
+                            else if (f.isSelected()) f.setIcon(true);
+                            else restore(f);
+                        } catch (PropertyVetoException ignored) { }
+                        syncButtons();
+                    });
+                    buttons.put(f, b);
+                    windowStrip.add(b);
+                    windowStrip.revalidate();
+                    windowStrip.repaint();
+                    try { f.setSelected(true); } catch (PropertyVetoException ignored) { }
+                    syncButtons();
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                } finally {
+                    launchingApps.remove(a);
+                    if (launchingApps.isEmpty()) {
+                        setLoadingCursor(false);
+                    }
+                }
+            }
+        }.execute();
     }
 
     private void restore(JInternalFrame f) {
@@ -1051,25 +1224,25 @@ public class VirtualOS extends JPanel {
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             int w = getWidth(), h = getHeight(), sz = IconStyle.size;
             if (selected || dragging) {
-                g.setColor(new Color(255, 255, 255, dragging ? 80 : 60));
-                g.fill(new RoundRectangle2D.Float(4, 2, w - 9, h - 5, 10, 10));
-                g.setColor(new Color(255, 255, 255, 120));
-                g.draw(new RoundRectangle2D.Float(4, 2, w - 9, h - 5, 10, 10));
+                g.setColor(new Color(255, 255, 255, dragging ? 75 : 52));
+                g.fill(new RoundRectangle2D.Float(3, 2, w - 6, h - 4, 10, 10));
+                g.setColor(new Color(255, 255, 255, 115));
+                g.draw(new RoundRectangle2D.Float(3, 2, w - 6, h - 4, 10, 10));
             }
-            paintGlyph(g, app, (w - sz) / 2f, 4, sz);
+            paintGlyph(g, app, (w - sz) / 2f, 5, sz);
             if (IconStyle.labels) {
-                int size = 12;
+                int size = 11;
                 g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, size));
                 FontMetrics fm = g.getFontMetrics();
-                String[] lines = wrap(app.title, fm, w - 8);
-                while (lines.length == 1 && fm.stringWidth(lines[0]) > w - 8 && size > 9) {
+                String[] lines = wrap(app.title, fm, w - 6);
+                while (lines.length == 1 && fm.stringWidth(lines[0]) > w - 6 && size > 9) {
                     g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, --size));
                     fm = g.getFontMetrics();
                 }
-                int y = 4 + sz + 14;
+                int y = 5 + sz + 12;
                 for (String line : lines) {
                     int x = (w - fm.stringWidth(line)) / 2;
-                    g.setColor(new Color(0, 0, 0, 170));
+                    g.setColor(new Color(0, 0, 0, 175));
                     g.drawString(line, x + 1, y + 1);
                     g.setColor(Color.WHITE);
                     g.drawString(line, x, y);
@@ -1111,11 +1284,11 @@ public class VirtualOS extends JPanel {
         abstract void paintCard(Graphics2D g);
     }
 
-    private static final class SystemWidget extends Card {
+    private final class SystemWidget extends Card {
         private double cpu, ram, usedGb, totalGb;
 
         SystemWidget() {
-            super(230, 104);
+            super(230, 118);
             update();
             new javax.swing.Timer(1500, e -> { update(); repaint(); }).start();
         }
@@ -1151,12 +1324,27 @@ public class VirtualOS extends JPanel {
         @Override void paintCard(Graphics2D g) {
             g.setColor(Theme.WIDGET_TEXT);
             g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 14));
-            g.drawString("System", 14, 26);
-            bar(g, "CPU", cpu, 38, new Color(0x4cc764));
-            bar(g, "RAM", ram, 58, new Color(0xf2c230));
+            g.drawString("System", 14, 24);
+            bar(g, "CPU", cpu, 36, new Color(0x4cc764));
+            bar(g, "RAM", ram, 55, new Color(0xf2c230));
             g.setColor(Theme.WIDGET_MUTED);
             g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 10));
-            g.drawString(String.format("%.1f of %.1f GB in use", usedGb, totalGb), 14, 90);
+            g.drawString(String.format("%.1f of %.1f GB in use", usedGb, totalGb), 14, 83);
+
+            g.setColor(Theme.WIDGET_TRACK);
+            g.drawLine(14, 91, getWidth() - 14, 91);
+
+            int openCount = openProcessCount();
+            g.setColor(openCount > 0 ? Theme.TEAL : Theme.WIDGET_MUTED);
+            g.fill(new Ellipse2D.Float(14, 100, 7, 7));
+
+            g.setColor(Theme.WIDGET_TEXT);
+            g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 11));
+            g.drawString("Open Processes", 26, 107);
+
+            String countStr = String.valueOf(openCount);
+            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 11));
+            g.drawString(countStr, getWidth() - 14 - g.getFontMetrics().stringWidth(countStr), 107);
         }
     }
 
@@ -1181,6 +1369,8 @@ public class VirtualOS extends JPanel {
         private final JTextField timeInput = new JTextField("09:00 AM", 8);
         private final JTextField noteInput = new JTextField(15);
         private final DefaultListModel<Reminder> reminderModel = new DefaultListModel<>();
+        private final List<CustomButton> dayButtons = new ArrayList<>();
+        private final List<LocalDate> dayDates = new ArrayList<>();
 
         CalendarPopupPanel() {
             setLayout(new BorderLayout(6, 6));
@@ -1210,12 +1400,14 @@ public class VirtualOS extends JPanel {
                 grid.add(new JLabel(""));
             }
 
+            LocalDate today = LocalDate.now();
             for (int day = 1; day <= ym.lengthOfMonth(); day++) {
                 LocalDate date = ym.atDay(day);
-                JButton btn = new JButton(String.valueOf(day));
-                btn.setFont(Theme.SMALL);
-                btn.setMargin(new Insets(2, 2, 2, 2));
+                CustomButton btn = new CustomButton(String.valueOf(day), CustomButton.Variant.CALENDAR);
+                btn.setToday(date.equals(today));
                 btn.addActionListener(e -> selectDate(date));
+                dayButtons.add(btn);
+                dayDates.add(date);
                 grid.add(btn);
             }
             add(grid, BorderLayout.CENTER);
@@ -1260,6 +1452,9 @@ public class VirtualOS extends JPanel {
 
         private void selectDate(LocalDate date) {
             this.selectedDate = date;
+            for (int i = 0; i < dayButtons.size(); i++) {
+                dayButtons.get(i).setSelectedDay(dayDates.get(i).equals(date));
+            }
             selectedHeader.setText("Reminders - " + date);
             refreshList();
         }
@@ -1318,10 +1513,6 @@ public class VirtualOS extends JPanel {
 
         windowStrip.setOpaque(false);
 
-        openCountLabel.setFont(Theme.BOLD);
-        openCountLabel.setForeground(Color.WHITE);
-        updateOpenCount();
-
         clock.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         clock.setToolTipText("Click to toggle calendar & reminders");
         clock.addMouseListener(new MouseAdapter() {
@@ -1330,22 +1521,27 @@ public class VirtualOS extends JPanel {
             }
         });
 
-        JButton showDesktopBtn = new JButton("Desktop");
-        showDesktopBtn.setFocusable(false);
-        showDesktopBtn.setToolTipText("Hide or restore all open windows");
+        CustomButton showDesktopBtn = new CustomButton("", CustomButton.Variant.EDGE);
+        showDesktopBtn.setPreferredSize(new Dimension(18, 46));
+        showDesktopBtn.setMinimumSize(new Dimension(18, 46));
+        showDesktopBtn.setMaximumSize(new Dimension(18, 46));
+        showDesktopBtn.setToolTipText("Show Desktop (Hide or restore all open windows)");
         showDesktopBtn.addActionListener(e -> toggleShowDesktop());
 
-        JPanel tray = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 4));
+        JPanel tray = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 5));
         tray.setOpaque(false);
-        tray.add(openCountLabel);
         tray.add(new ModeToggle());
         tray.add(battery);
         tray.add(clock);
-        tray.add(showDesktopBtn);
+
+        JPanel east = new JPanel(new BorderLayout(4, 0));
+        east.setOpaque(false);
+        east.add(tray, BorderLayout.CENTER);
+        east.add(showDesktopBtn, BorderLayout.EAST);
 
         bar.add(left, BorderLayout.WEST);
         bar.add(windowStrip, BorderLayout.CENTER);
-        bar.add(tray, BorderLayout.EAST);
+        bar.add(east, BorderLayout.EAST);
         return bar;
     }
 
@@ -1409,14 +1605,11 @@ public class VirtualOS extends JPanel {
         pm.show(search, 0, -pm.getPreferredSize().height);
     }
 
-    private static final class StartButton extends JButton {
+    private static final class StartButton extends CustomButton {
         private boolean hover;
 
         StartButton() {
-            setContentAreaFilled(false);
-            setBorderPainted(false);
-            setFocusPainted(false);
-            setFocusable(false);
+            super("Start", Variant.PRIMARY);
             setPreferredSize(new Dimension(100, 32));
             addMouseListener(new MouseAdapter() {
                 @Override public void mouseEntered(MouseEvent e) { hover = true; repaint(); }
@@ -1904,4 +2097,3 @@ public class VirtualOS extends JPanel {
         return out;
     }
 }
-// ```[cite: 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]

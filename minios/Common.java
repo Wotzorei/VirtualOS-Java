@@ -9,8 +9,6 @@ import javax.swing.table.TableCellRenderer;
 import javax.swing.plaf.basic.BasicArrowButton;
 import javax.swing.plaf.basic.BasicComboBoxUI;
 import java.awt.*;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
@@ -73,47 +71,14 @@ public final class Common {
         };
     }
 
-    /** Rounded flat button in three flavours. */
-    public static class Btn extends JButton {
+    /** Rounded custom button in three flavours. */
+    public static class Btn extends CustomButton {
         public enum Kind { PRIMARY, SOFT, DANGER }
-        private final Kind kind;
-        private boolean hover;
 
         public Btn(String text, Kind kind) {
-            super(text);
-            this.kind = kind;
-            setContentAreaFilled(false);
-            setBorderPainted(false);
-            setFocusPainted(false);
-            setOpaque(false);
-            setFont(Theme.BOLD);
-            setBorder(new EmptyBorder(3, 12, 3, 12));
-            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-            addMouseListener(new MouseAdapter() {
-                @Override public void mouseEntered(MouseEvent e) { hover = true; repaint(); }
-                @Override public void mouseExited(MouseEvent e) { hover = false; repaint(); }
-            });
-        }
-
-        /** Read live so a theme change needs no re-colouring of buttons. */
-        @Override public Color getForeground() { return kind == Kind.SOFT ? Theme.PRIMARY_D : Color.WHITE; }
-
-        @Override public Dimension getPreferredSize() {
-            Dimension d = super.getPreferredSize();
-            return new Dimension(d.width, Math.max(26, d.height));
-        }
-
-        @Override protected void paintComponent(Graphics g0) {
-            Graphics2D g = (Graphics2D) g0.create();
-            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            Color base = kind == Kind.PRIMARY ? Theme.PRIMARY : kind == Kind.DANGER ? Theme.CORAL : Theme.PRIMARY_L;
-            if (!isEnabled()) base = Theme.BORDER;
-            else if (getModel().isPressed()) base = kind == Kind.SOFT ? Theme.mix(Theme.PRIMARY_L, Theme.PRIMARY, .30f) : base.darker();
-            else if (hover) base = kind == Kind.SOFT ? Theme.mix(Theme.PRIMARY_L, Theme.PRIMARY, .16f) : kind == Kind.PRIMARY ? Theme.PRIMARY_H : base.brighter();
-            g.setColor(base);
-            g.fill(new java.awt.geom.RoundRectangle2D.Float(0, 0, getWidth(), getHeight(), 14, 14));
-            g.dispose();
-            super.paintComponent(g0);
+            super(text, kind == Kind.PRIMARY ? Variant.PRIMARY
+                    : kind == Kind.DANGER ? Variant.DANGER
+                    : Variant.SECONDARY);
         }
     }
 
